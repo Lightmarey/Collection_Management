@@ -10,6 +10,7 @@ export const FAILURE_TYPES = Object.freeze({
   UNAVAILABLE: "paid_or_no_permission",
   STRUCTURE_CHANGED: "structure_changed",
   HTTP_ERROR: "http_error",
+  STOPPED: "stopped",
 });
 
 function sha256(value) {
@@ -43,33 +44,37 @@ export function classifyFailure({ status, body = "" } = {}) {
 }
 
 export function normalizeCollectionPage(payload) {
-  const data = payload?.data ?? payload;
-  if (!data || !Array.isArray(data.items)) {
+  const rawData = payload?.data;
+  const items = Array.isArray(rawData) ? rawData : rawData?.items;
+  const paging = payload?.paging ?? rawData?.paging;
+  if (!Array.isArray(items)) {
     return { status: FAILURE_TYPES.STRUCTURE_CHANGED, items: [], nextPage: false };
   }
 
-  const items = data.items.map((item, index) => {
-    const externalId = item?.id ?? item?.external_id;
+  const normalizedItems = items.map((item, index) => {
+    const content = item?.content && typeof item.content === "object" ? item.content : item;
+    const externalId = item?.id ?? item?.external_id ?? content?.id ?? content?.external_id;
     if (externalId === undefined || externalId === null) {
       return { index, status: FAILURE_TYPES.STRUCTURE_CHANGED };
     }
-    const rawContent = item.content_html ?? item.content ?? item.body ?? "";
+    const rawContent = item.content_html ?? item.body ?? (typeof item.content === "string" ? item.content : null)
+      ?? content?.content_html ?? content?.content ?? content?.excerpt ?? content?.detailsText ?? "";
     return {
       externalId: String(externalId),
-      kind: String(item.type ?? "unknown"),
-      url: typeof item.url === "string" && item.url.startsWith("https://www.zhihu.com/") ? item.url : null,
-      titleHash: sha256(item.title ?? item.question?.title ?? ""),
+      kind: String(item.type ?? content?.type ?? "unknown"),
+      url: typeof (item.url ?? content?.url) === "string" && (item.url ?? content?.url).startsWith("https://www.zhihu.com/") ? (item.url ?? content?.url) : null,
+      titleHash: sha256(item.title ?? content?.title ?? content?.question?.title ?? ""),
       contentHash: rawContent ? sha256(rawContent) : null,
-      status: item.is_locked || item.is_paid ? FAILURE_TYPES.UNAVAILABLE : "ok",
+      status: item.is_locked || item.is_paid || content?.is_locked || content?.is_paid ? FAILURE_TYPES.UNAVAILABLE : "ok",
     };
   });
 
   return {
-    status: items.some((item) => item.status === FAILURE_TYPES.STRUCTURE_CHANGED)
+    status: normalizedItems.some((item) => item.status === FAILURE_TYPES.STRUCTURE_CHANGED)
       ? FAILURE_TYPES.STRUCTURE_CHANGED
       : "ok",
-    items,
-    nextPage: Boolean(data.paging && data.paging.is_end === false),
+    items: normalizedItems,
+    nextPage: Boolean(paging && paging.is_end === false && typeof paging.next === "string"),
   };
 }
 

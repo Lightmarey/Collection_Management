@@ -3,11 +3,21 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import { isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
+import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage } from './zhihu-m0.mjs';
 
 const ZHIHU_PARTITION = 'persist:zhihu-m0';
+const ZHIHU_USER_DATA_DIR = 'knowledge-management';
+const ZHIHU_PAGE_SIZE = 20;
+const ZHIHU_MAX_ITEMS = 20;
+const ZHIHU_MIN_REQUEST_DELAY_MS = 1200;
+const ZHIHU_REQUEST_TIMEOUT_MS = 15000;
 const smokeMode = process.env.KNOWLEDGE_SMOKE === '1' || process.argv.includes('--smoke');
 let mainWindow: BrowserWindow | null = null;
 let remoteWindow: BrowserWindow | null = null;
+let collectionCaptureInProgress = false;
+let collectionCaptureStopRequested = false;
+
+app.setPath('userData', path.join(app.getPath('appData'), ZHIHU_USER_DATA_DIR));
 
 function log(event: string, details: Record<string, unknown> = {}) {
   console.log(JSON.stringify(sanitizeForLog({ event, ...details })));
@@ -51,18 +61,21 @@ function configureZhihuSession() {
   return zhihuSession;
 }
 
-function createRemoteWindow(url = 'https://www.zhihu.com/') {
+function createRemoteWindow(url = 'https://www.zhihu.com/', visible = false) {
   if (!isAllowedZhihuUrl(url)) throw new Error('unsupported remote url');
   if (remoteWindow && !remoteWindow.isDestroyed()) {
-    remoteWindow.focus();
-    return;
+    if (visible) {
+      remoteWindow.show();
+      remoteWindow.focus();
+    }
+    return remoteWindow;
   }
 
   configureZhihuSession();
   remoteWindow = new BrowserWindow({
     width: 1100,
     height: 760,
-    title: '知乎登录与内容窗口',
+    show: visible,
     webPreferences: {
       partition: ZHIHU_PARTITION,
       contextIsolation: true,
@@ -74,6 +87,159 @@ function createRemoteWindow(url = 'https://www.zhihu.com/') {
   attachRemoteGuards(remoteWindow);
   remoteWindow.on('closed', () => { remoteWindow = null; });
   void remoteWindow.loadURL(url);
+  return remoteWindow;
+}
+
+function collectionUrl(value: unknown) {
+  if (typeof value !== 'string') throw new Error('collection url is required');
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.zhihu.com') throw new Error('unsupported collection url');
+  const match = parsed.pathname.match(/^\/collection\/(\d+)\/?$/);
+  if (!match) throw new Error('unsupported collection url');
+  return {
+    id: match[1],
+    pageUrl: `https://www.zhihu.com/collection/${match[1]}`,
+    apiBase: `https://www.zhihu.com/api/v4/collections/${match[1]}`,
+  };
+}
+
+function isCollectionItemsUrl(value: unknown, collectionId: string) {
+  if (typeof value !== 'string') return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:'
+      && parsed.hostname === 'www.zhihu.com'
+      && parsed.pathname === `/api/v4/collections/${collectionId}/items`;
+  } catch {
+    return false;
+  }
+}
+
+type RemoteJsonResponse = {
+  status: number;
+  payload: unknown | null;
+  marker: 'captcha' | 'unavailable' | 'none';
+};
+
+async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: string): Promise<RemoteJsonResponse> {
+  const script = `
+    (async () => {
+      const response = await fetch(${JSON.stringify(url)}, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(${ZHIHU_REQUEST_TIMEOUT_MS}),
+      });
+      let payload = null;
+      try { payload = await response.json(); } catch {}
+      const markerSource = payload && typeof payload === 'object'
+        ? JSON.stringify({ code: payload.code, message: payload.message, error: payload.error })
+        : '';
+      const marker = /captcha|安全验证|人机验证/i.test(markerSource)
+        ? 'captcha'
+        : /付费|盐选|无权限|permission|forbidden/i.test(markerSource)
+          ? 'unavailable'
+          : 'none';
+      return { status: response.status, payload: response.ok ? payload : null, marker };
+    })()
+  `;
+  try {
+    return await Promise.race([
+      contents.executeJavaScript(script, true) as Promise<RemoteJsonResponse>,
+      new Promise<RemoteJsonResponse>((resolve) => setTimeout(() => resolve({ status: 599, payload: null, marker: 'none' }), ZHIHU_REQUEST_TIMEOUT_MS)),
+    ]);
+  } catch {
+    return { status: 599, payload: null, marker: 'none' };
+  }
+}
+
+async function loadRemotePage(window: BrowserWindow, url: string) {
+  if (window.webContents.getURL() === url) return;
+  await Promise.race([
+    window.loadURL(url),
+    new Promise<void>((resolve) => setTimeout(resolve, ZHIHU_REQUEST_TIMEOUT_MS)),
+  ]);
+}
+
+function captureResult(collectionId: string, items: unknown[], pageCount: number, extra: Record<string, unknown> = {}) {
+  return {
+    ok: extra.failureType === undefined,
+    collectionId,
+    itemCount: items.length,
+    pageCount,
+    items: items.slice(0, ZHIHU_MAX_ITEMS),
+    ...extra,
+  };
+}
+
+function classifyHttpFailure(response: RemoteJsonResponse) {
+  return classifyFailure({ status: response.status, body: response.marker }) ?? FAILURE_TYPES.HTTP_ERROR;
+}
+
+function responseFailure(response: RemoteJsonResponse) {
+  return response.marker === 'none' && response.status >= 200 && response.status < 300
+    ? null
+    : classifyHttpFailure(response);
+}
+
+async function captureCollection(url: unknown) {
+  const target = collectionUrl(url);
+  if (collectionCaptureInProgress) throw new Error('collection capture already running');
+  collectionCaptureInProgress = true;
+  collectionCaptureStopRequested = false;
+
+  try {
+    const window = createRemoteWindow(target.pageUrl);
+    await loadRemotePage(window, target.pageUrl);
+
+    const metadata = await fetchJsonInRemoteSession(window.webContents, target.apiBase);
+    const metadataFailure = responseFailure(metadata);
+    if (metadataFailure) {
+      return captureResult(target.id, [], 0, { failureType: metadataFailure });
+    }
+    if (collectionCaptureStopRequested) return captureResult(target.id, [], 0, { failureType: FAILURE_TYPES.STOPPED });
+
+    const items: unknown[] = [];
+    let nextUrl = `${target.apiBase}/items?offset=0&limit=${ZHIHU_PAGE_SIZE}`;
+    let pageCount = 0;
+    let nextPageAvailable = false;
+
+    while (nextUrl && items.length < ZHIHU_MAX_ITEMS) {
+      if (collectionCaptureStopRequested) return captureResult(target.id, items, pageCount, { nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
+      if (pageCount > 0) await new Promise((resolve) => setTimeout(resolve, ZHIHU_MIN_REQUEST_DELAY_MS));
+      const response = await fetchJsonInRemoteSession(window.webContents, nextUrl);
+      pageCount += 1;
+      const pageFailure = responseFailure(response);
+      if (pageFailure) {
+        return captureResult(target.id, items, pageCount, {
+          nextPageAvailable,
+          failureType: pageFailure,
+        });
+      }
+
+      const normalized = normalizeCollectionPage(response.payload);
+      if (normalized.status !== 'ok') {
+        return captureResult(target.id, items, pageCount, { nextPageAvailable, failureType: normalized.status });
+      }
+      items.push(...normalized.items.slice(0, ZHIHU_MAX_ITEMS - items.length));
+
+      const paging = (response.payload as { paging?: { is_end?: unknown; next?: unknown } } | null)?.paging;
+      nextPageAvailable = normalized.nextPage;
+      const candidate = paging?.next;
+      if (!normalized.nextPage) break;
+      if (!isCollectionItemsUrl(candidate, target.id) || candidate === nextUrl) {
+        return captureResult(target.id, items, pageCount, { nextPageAvailable: true, failureType: FAILURE_TYPES.STRUCTURE_CHANGED });
+      }
+      nextUrl = candidate as string;
+    }
+
+    return captureResult(target.id, items, pageCount, {
+      nextPageAvailable,
+      truncated: items.length >= ZHIHU_MAX_ITEMS && nextPageAvailable,
+    });
+  } finally {
+    collectionCaptureInProgress = false;
+    collectionCaptureStopRequested = false;
+  }
 }
 
 function createMainWindow() {
@@ -109,11 +275,9 @@ ipcMain.handle('app:ping', (event) => {
   return { ok: true };
 });
 
-ipcMain.handle('zhihu:open', (event, url?: unknown) => {
+ipcMain.handle('zhihu:login', (event) => {
   assertTrustedLocalSender(event.sender);
-  const target = url === undefined ? 'https://www.zhihu.com/' : url;
-  if (typeof target !== 'string' || !isAllowedZhihuUrl(target)) throw new Error('unsupported remote url');
-  createRemoteWindow(target);
+  createRemoteWindow('https://www.zhihu.com/', true);
   return { ok: true, partition: ZHIHU_PARTITION };
 });
 
@@ -121,6 +285,22 @@ ipcMain.handle('zhihu:session-summary', async (event) => {
   assertTrustedLocalSender(event.sender);
   const cookies = await session.fromPartition(ZHIHU_PARTITION).cookies.get({ domain: 'zhihu.com' });
   return { partition: ZHIHU_PARTITION, cookieCount: cookies.length };
+});
+
+ipcMain.handle('zhihu:capture-collection', async (event, url?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  try {
+    return await captureCollection(url);
+  } catch (error) {
+    log('zhihu-capture-failed', { error });
+    return captureResult('', [], 0, { failureType: FAILURE_TYPES.HTTP_ERROR });
+  }
+});
+
+ipcMain.handle('zhihu:stop-capture', (event) => {
+  assertTrustedLocalSender(event.sender);
+  collectionCaptureStopRequested = true;
+  return { ok: collectionCaptureInProgress };
 });
 
 ipcMain.handle('app:smoke-ready', (event) => {

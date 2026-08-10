@@ -9,6 +9,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "test": "node --test test/electron-security.test.mjs test/zhihu-m0.test.mjs",
+    "test:zhihu-headless": "electron scripts/zhihu-headless-check.mjs",
     "test:smoke": "node scripts/electron-smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
