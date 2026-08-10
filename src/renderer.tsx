@@ -8,8 +8,8 @@ function App() {
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
-    void window.desktop.ping().then(({ ok }) => {
-      setStatus(ok ? '本地 IPC 已连接' : 'IPC 不可用');
+    void window.desktop.ping().then(({ ok, database }) => {
+      setStatus(!ok ? 'IPC 不可用' : database.ok ? `本地 IPC 已连接，数据库 schema v${database.schemaVersion}` : database.error ?? '数据库不可用');
       if (new URLSearchParams(window.location.search).has('smoke')) void window.desktop.smokeReady();
     }).catch(() => setStatus('IPC 连接失败'));
   }, []);

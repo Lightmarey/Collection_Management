@@ -19,7 +19,7 @@ type ZhihuCaptureResult = {
 };
 
 contextBridge.exposeInMainWorld('desktop', {
-  ping: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('app:ping'),
+  ping: (): Promise<{ ok: boolean; database: { ok: boolean; schemaVersion?: number; error?: string } }> => ipcRenderer.invoke('app:ping'),
   loginZhihu: (): Promise<{ ok: boolean; partition: string }> => ipcRenderer.invoke('zhihu:login'),
   zhihuSessionSummary: (): Promise<{ partition: string; cookieCount: number }> => ipcRenderer.invoke('zhihu:session-summary'),
   captureZhihuCollection: (url: string): Promise<ZhihuCaptureResult> => ipcRenderer.invoke('zhihu:capture-collection', url),

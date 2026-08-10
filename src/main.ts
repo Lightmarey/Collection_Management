@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import { isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
 import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage } from './zhihu-m0.mjs';
+import { openKnowledgeDatabase, type KnowledgeDatabase } from './database.mjs';
 
 const ZHIHU_PARTITION = 'persist:zhihu-m0';
 const ZHIHU_USER_DATA_DIR = 'knowledge-management';
@@ -16,6 +17,7 @@ let mainWindow: BrowserWindow | null = null;
 let remoteWindow: BrowserWindow | null = null;
 let collectionCaptureInProgress = false;
 let collectionCaptureStopRequested = false;
+let knowledgeDatabase: KnowledgeDatabase | null = null;
 
 app.setPath('userData', path.join(app.getPath('appData'), ZHIHU_USER_DATA_DIR));
 
@@ -272,7 +274,9 @@ function createMainWindow() {
 
 ipcMain.handle('app:ping', (event) => {
   assertTrustedLocalSender(event.sender);
-  return { ok: true };
+  return knowledgeDatabase
+    ? { ok: true, database: { ok: true, schemaVersion: knowledgeDatabase.schemaVersion } }
+    : { ok: true, database: { ok: false, error: '本地数据库初始化失败，请检查磁盘权限后重启' } };
 });
 
 ipcMain.handle('zhihu:login', (event) => {
@@ -314,10 +318,18 @@ ipcMain.handle('app:smoke-ready', (event) => {
 app.enableSandbox();
 app.on('ready', () => {
   log('startup');
+  try {
+    knowledgeDatabase = openKnowledgeDatabase(path.join(app.getPath('userData'), 'knowledge.sqlite'));
+  } catch (error) {
+    log('database-startup-failed', { code: error instanceof Error && 'code' in error ? error.code : 'DATABASE_ERROR' });
+  }
   configureZhihuSession();
   createMainWindow();
 });
-app.on('before-quit', () => log('shutdown'));
+app.on('before-quit', () => {
+  knowledgeDatabase?.close();
+  log('shutdown');
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });
 app.on('render-process-gone', (_event, _webContents, details) => log('render-process-gone', { reason: details.reason }));

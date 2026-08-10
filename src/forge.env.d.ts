@@ -2,7 +2,7 @@
 
 interface Window {
   desktop: {
-    ping(): Promise<{ ok: boolean }>;
+    ping(): Promise<{ ok: boolean; database: { ok: boolean; schemaVersion?: number; error?: string } }>;
     loginZhihu(): Promise<{ ok: boolean; partition: string }>;
     zhihuSessionSummary(): Promise<{ partition: string; cookieCount: number }>;
     captureZhihuCollection(url: string): Promise<{
