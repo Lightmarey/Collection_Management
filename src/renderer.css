@@ -1,5 +1,5 @@
 :root { color: #1f2937; font-family: system-ui, sans-serif; background: #f5f7fb; }
 body { margin: 0; }
 main { max-width: 680px; margin: 12vh auto; padding: 2rem; background: white; border-radius: 12px; box-shadow: 0 8px 28px #14213d14; }
-button { border: 0; border-radius: 8px; padding: .7rem 1rem; color: white; background: #2563eb; cursor: pointer; }
+button { border: 0; border-radius: 8px; padding: .7rem 1rem; margin-right: .5rem; color: white; background: #2563eb; cursor: pointer; }
 small { display: block; margin-top: 1.5rem; color: #64748b; }

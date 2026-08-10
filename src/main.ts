@@ -117,6 +117,12 @@ ipcMain.handle('zhihu:open', (event, url?: unknown) => {
   return { ok: true, partition: ZHIHU_PARTITION };
 });
 
+ipcMain.handle('zhihu:session-summary', async (event) => {
+  assertTrustedLocalSender(event.sender);
+  const cookies = await session.fromPartition(ZHIHU_PARTITION).cookies.get({ domain: 'zhihu.com' });
+  return { partition: ZHIHU_PARTITION, cookieCount: cookies.length };
+});
+
 ipcMain.handle('app:smoke-ready', (event) => {
   assertTrustedLocalSender(event.sender);
   if (!smokeMode) return false;

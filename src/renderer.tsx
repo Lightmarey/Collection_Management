@@ -19,6 +19,9 @@ function App() {
       <button type="button" onClick={() => void window.desktop.openZhihu()}>
         打开隔离知乎窗口
       </button>
+      <button type="button" onClick={() => void window.desktop.zhihuSessionSummary().then(({ cookieCount }) => setStatus(`隔离 session 已保存 ${cookieCount} 个 Cookie（仅显示数量）`))}>
+        检查隔离 session
+      </button>
       <small>远程窗口使用独立 persist:zhihu-m0 session；不会向 UI 暴露 Cookie、Token 或原始 ipcRenderer。</small>
     </main>
   );
