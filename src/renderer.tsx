@@ -5,7 +5,13 @@ import './renderer.css';
 function App() {
   const [status, setStatus] = useState('连接中…');
   const [collectionUrl, setCollectionUrl] = useState('https://www.zhihu.com/collection/REDACTED_COLLECTION_ID');
+  const [documentUrl, setDocumentUrl] = useState('https://www.zhihu.com/');
   const [capturing, setCapturing] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  function showImportResult(result: { ok: boolean; status: string; versionCreated?: boolean; error?: string }) {
+    setStatus(result.ok ? `导入完成：${result.versionCreated ? '已写入新版本' : '内容未变化，已幂等复用'}` : `导入未完成：${result.status}${result.error ? `（${result.error}）` : ''}`);
+  }
 
   useEffect(() => {
     void window.desktop.ping().then(({ ok, database }) => {
@@ -17,7 +23,33 @@ function App() {
   return (
     <main>
       <h1>Knowledge Management</h1>
-      <p>{capturing && <span className="progress" aria-label="读取中" />} {status}</p>
+      <p>{(capturing || importing) && <span className="progress" aria-label="处理中" />} {status}</p>
+      <h2>导入正文</h2>
+      <label>
+        知乎 URL
+        <input value={documentUrl} onChange={(event) => setDocumentUrl(event.target.value)} />
+      </label>
+      <button type="button" disabled={importing} onClick={() => {
+        setImporting(true);
+        setStatus('正在通过隔离 session 读取用户主动提供的 URL…');
+        void window.desktop.importDocumentUrl(documentUrl).then(showImportResult).catch(() => setStatus('URL 导入失败')).finally(() => setImporting(false));
+      }}>
+        导入 URL 正文
+      </button>
+      <label>
+        Markdown / HTML 文件
+        <input type="file" accept=".md,.markdown,.html,.htm,text/markdown,text/html" disabled={importing} onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          const kind = /\.html?$/i.test(file.name) ? 'html' : 'markdown';
+          setImporting(true);
+          setStatus('正在清洗并保存文件正文…');
+          void file.text().then((content) => window.desktop.importDocumentFile({ name: file.name, kind, content })).then(showImportResult).catch(() => setStatus('文件导入失败')).finally(() => {
+            setImporting(false);
+            event.target.value = '';
+          });
+        }} />
+      </label>
       <button type="button" onClick={() => void window.desktop.loginZhihu().then(() => setStatus('已打开登录窗口；登录完成后可关闭窗口，session 会在本机长期保留'))}>
         登录知乎
       </button>

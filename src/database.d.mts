@@ -13,6 +13,10 @@ export type DocumentInput = {
   author?: string;
   body: string;
   url?: string | null;
+  publishedAt?: string | null;
+  fetchedAt?: string | null;
+  mediaRefs?: Array<Record<string, unknown>>;
+  importError?: string | null;
 };
 
 export type DocumentWriteResult = {
@@ -28,6 +32,7 @@ export class KnowledgeDatabase {
   close(): void;
   upsertDocument(input: DocumentInput): DocumentWriteResult;
   importDocuments(inputs: DocumentInput[]): DocumentWriteResult[];
+  recordImportError(input: DocumentInput & { importError: string }): DocumentWriteResult & { importError: string };
   addHighlight(input: { documentId: string; documentVersionId?: string | null; quote: string; startOffset?: number | null; endOffset?: number | null; color?: string }): Record<string, unknown>;
   addNote(input: { documentId: string; documentVersionId?: string | null; body: string }): Record<string, unknown>;
   addTag(documentId: string, name: string): Record<string, unknown>;

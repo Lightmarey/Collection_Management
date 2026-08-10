@@ -23,6 +23,26 @@ interface Window {
       }>;
     }>;
     stopZhihuCapture(): Promise<{ ok: boolean }>;
+    importDocumentFile(input: { name: string; kind: 'markdown' | 'html'; content: string }): Promise<{
+      ok: boolean;
+      status: string;
+      error?: string;
+      documentId?: string;
+      versionId?: string;
+      created?: boolean;
+      versionCreated?: boolean;
+      title?: string;
+    }>;
+    importDocumentUrl(url: string): Promise<{
+      ok: boolean;
+      status: string;
+      error?: string;
+      documentId?: string;
+      versionId?: string;
+      created?: boolean;
+      versionCreated?: boolean;
+      title?: string;
+    }>;
     smokeReady(): Promise<boolean>;
   };
 }

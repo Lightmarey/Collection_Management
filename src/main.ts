@@ -5,6 +5,7 @@ import path from 'node:path';
 import { isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
 import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage } from './zhihu-m0.mjs';
 import { openKnowledgeDatabase, type KnowledgeDatabase } from './database.mjs';
+import { importUrl, parseDocument, type ParsedDocument } from './document-import.mjs';
 
 const ZHIHU_PARTITION = 'persist:zhihu-m0';
 const ZHIHU_USER_DATA_DIR = 'knowledge-management';
@@ -123,6 +124,12 @@ type RemoteJsonResponse = {
   marker: 'captcha' | 'unavailable' | 'none';
 };
 
+type RemoteHtmlResponse = {
+  status: number;
+  body: string;
+  fetchedAt: string;
+};
+
 async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: string): Promise<RemoteJsonResponse> {
   const script = `
     (async () => {
@@ -151,6 +158,27 @@ async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: str
     ]);
   } catch {
     return { status: 599, payload: null, marker: 'none' };
+  }
+}
+
+async function fetchHtmlInRemoteSession(contents: Electron.WebContents, url: string): Promise<RemoteHtmlResponse> {
+  const script = `
+    (async () => {
+      const response = await fetch(${JSON.stringify(url)}, {
+        credentials: 'include',
+        headers: { Accept: 'text/html,application/xhtml+xml' },
+        signal: AbortSignal.timeout(${ZHIHU_REQUEST_TIMEOUT_MS}),
+      });
+      return { status: response.status, body: await response.text(), fetchedAt: new Date().toISOString() };
+    })()
+  `;
+  try {
+    return await Promise.race([
+      contents.executeJavaScript(script, true) as Promise<RemoteHtmlResponse>,
+      new Promise<RemoteHtmlResponse>((resolve) => setTimeout(() => resolve({ status: 599, body: '', fetchedAt: new Date().toISOString() }), ZHIHU_REQUEST_TIMEOUT_MS)),
+    ]);
+  } catch {
+    return { status: 599, body: '', fetchedAt: new Date().toISOString() };
   }
 }
 
@@ -272,6 +300,41 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+type ImportResult = {
+  ok: boolean;
+  status: string;
+  error?: string;
+  source?: string;
+  externalId?: string;
+  url?: string;
+  document?: ParsedDocument;
+};
+
+function persistImportResult(result: ImportResult) {
+  if (!knowledgeDatabase) return { ok: false, status: 'database_error', error: 'database_unavailable' };
+  try {
+    if (result.ok && result.document) {
+      const write = knowledgeDatabase.upsertDocument(result.document);
+      return { ok: true, status: result.status, documentId: write.documentId, versionId: write.versionId, created: write.created, versionCreated: write.versionCreated, title: result.document.title };
+    }
+    if (result.source && result.externalId) {
+      const write = knowledgeDatabase.recordImportError({
+        source: result.source,
+        externalId: result.externalId,
+        url: result.url ?? null,
+        body: '',
+        importError: result.status,
+        fetchedAt: new Date().toISOString(),
+      });
+      return { ok: false, status: result.status, error: result.error ?? result.status, documentId: write.documentId };
+    }
+    return { ok: false, status: result.status, error: result.error ?? result.status };
+  } catch (error) {
+    log('document-import-failed', { code: error instanceof Error && 'code' in error ? error.code : 'DATABASE_ERROR' });
+    return { ok: false, status: 'database_error', error: 'database_write_failed' };
+  }
+}
+
 ipcMain.handle('app:ping', (event) => {
   assertTrustedLocalSender(event.sender);
   return knowledgeDatabase
@@ -305,6 +368,34 @@ ipcMain.handle('zhihu:stop-capture', (event) => {
   assertTrustedLocalSender(event.sender);
   collectionCaptureStopRequested = true;
   return { ok: collectionCaptureInProgress };
+});
+
+ipcMain.handle('document:import-file', (event, input?: { name?: unknown; kind?: unknown; content?: unknown }) => {
+  assertTrustedLocalSender(event.sender);
+  const name = typeof input?.name === 'string' ? input.name.trim() : '';
+  const kind = typeof input?.kind === 'string' ? input.kind : '';
+  if (!name) return persistImportResult({ ok: false, status: 'invalid_input', error: 'file_name_required' });
+  const result = parseDocument({
+    kind,
+    content: input?.content,
+    source: 'file',
+    externalId: `file:${name}`,
+  });
+  return persistImportResult(result.ok ? result : { ...result, source: 'file', externalId: `file:${name}` });
+});
+
+ipcMain.handle('document:import-url', async (event, url?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!isAllowedZhihuUrl(typeof url === 'string' ? url : '')) return persistImportResult({ ok: false, status: 'unsupported_source', error: 'unsupported_zhihu_url' });
+  try {
+    const target = typeof url === 'string' ? url : '';
+    const window = createRemoteWindow(target);
+    await loadRemotePage(window, target);
+    const result = await importUrl(target, { fetchHtml: (sourceUrl) => fetchHtmlInRemoteSession(window.webContents, sourceUrl) });
+    return persistImportResult(result);
+  } catch {
+    return persistImportResult({ ok: false, status: FAILURE_TYPES.HTTP_ERROR, source: 'zhihu', externalId: typeof url === 'string' ? url : '' });
+  }
 });
 
 ipcMain.handle('app:smoke-ready', (event) => {

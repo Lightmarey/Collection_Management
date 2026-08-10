@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 const BACKUP_TABLES = [
   'documents',
@@ -21,8 +21,8 @@ const BACKUP_TABLES = [
 ];
 
 const TABLE_COLUMNS = {
-  documents: ['id', 'source', 'external_id', 'current_version_id', 'title', 'author', 'url', 'created_at', 'updated_at'],
-  document_versions: ['id', 'document_id', 'version_number', 'title', 'author', 'body', 'content_hash', 'created_at'],
+  documents: ['id', 'source', 'external_id', 'current_version_id', 'title', 'author', 'url', 'published_at', 'fetched_at', 'media_json', 'import_error', 'created_at', 'updated_at'],
+  document_versions: ['id', 'document_id', 'version_number', 'title', 'author', 'body', 'content_hash', 'published_at', 'fetched_at', 'media_json', 'import_error', 'created_at'],
   collections: ['id', 'source', 'external_id', 'name', 'description', 'created_at', 'updated_at'],
   collection_items: ['collection_id', 'document_id', 'position', 'created_at'],
   highlights: ['id', 'document_id', 'document_version_id', 'quote', 'start_offset', 'end_offset', 'color', 'created_at'],
@@ -183,6 +183,21 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        ALTER TABLE documents ADD COLUMN published_at TEXT;
+        ALTER TABLE documents ADD COLUMN fetched_at TEXT;
+        ALTER TABLE documents ADD COLUMN media_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE documents ADD COLUMN import_error TEXT;
+        ALTER TABLE document_versions ADD COLUMN published_at TEXT;
+        ALTER TABLE document_versions ADD COLUMN fetched_at TEXT;
+        ALTER TABLE document_versions ADD COLUMN media_json TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE document_versions ADD COLUMN import_error TEXT;
+      `);
+    },
+  },
 ];
 
 export class DatabaseError extends Error {
@@ -203,6 +218,15 @@ function text(value) {
 
 function contentHash(body) {
   return createHash('sha256').update(body).digest('hex');
+}
+
+function nullableText(value) {
+  if (value == null || value === '') return null;
+  return text(value);
+}
+
+function mediaJson(value) {
+  return JSON.stringify(Array.isArray(value) ? value : []);
 }
 
 function dbError(operation, error) {
@@ -280,14 +304,18 @@ export class KnowledgeDatabase {
     const body = text(input?.body);
     const url = input?.url == null ? null : text(input.url);
     const timestamp = now();
+    const publishedAt = nullableText(input?.publishedAt);
+    const fetchedAt = nullableText(input?.fetchedAt) ?? timestamp;
+    const media = mediaJson(input?.mediaRefs);
+    const importError = nullableText(input?.importError);
     const existing = this.db.prepare('SELECT * FROM documents WHERE source = ? AND external_id = ?').get(source, externalId);
     if (!existing) {
       const documentId = input?.id || randomUUID();
       const versionId = randomUUID();
-      this.db.prepare(`INSERT INTO documents (id, source, external_id, current_version_id, title, author, url, created_at, updated_at)
-        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)`).run(documentId, source, externalId, title, author, url, timestamp, timestamp);
-      this.db.prepare(`INSERT INTO document_versions (id, document_id, version_number, title, author, body, content_hash, created_at)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?)`).run(versionId, documentId, title, author, body, contentHash(body), timestamp);
+      this.db.prepare(`INSERT INTO documents (id, source, external_id, current_version_id, title, author, url, published_at, fetched_at, media_json, import_error, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(documentId, source, externalId, title, author, url, publishedAt, fetchedAt, media, importError, timestamp, timestamp);
+      this.db.prepare(`INSERT INTO document_versions (id, document_id, version_number, title, author, body, content_hash, published_at, fetched_at, media_json, import_error, created_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(versionId, documentId, title, author, body, contentHash(body), publishedAt, fetchedAt, media, importError, timestamp);
       this.db.prepare('UPDATE documents SET current_version_id = ? WHERE id = ?').run(versionId, documentId);
       this._refreshSearchIndex(documentId);
       return { documentId, versionId, created: true, versionCreated: true };
@@ -298,16 +326,16 @@ export class KnowledgeDatabase {
     if (changed) {
       const versionId = randomUUID();
       const versionNumber = Number(this.db.prepare('SELECT COALESCE(MAX(version_number), 0) + 1 AS next FROM document_versions WHERE document_id = ?').get(existing.id).next);
-      this.db.prepare(`INSERT INTO document_versions (id, document_id, version_number, title, author, body, content_hash, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(versionId, existing.id, versionNumber, title, author, body, contentHash(body), timestamp);
-      this.db.prepare(`UPDATE documents SET current_version_id = ?, title = ?, author = ?, url = ?, updated_at = ? WHERE id = ?`)
-        .run(versionId, title, author, url, timestamp, existing.id);
+      this.db.prepare(`INSERT INTO document_versions (id, document_id, version_number, title, author, body, content_hash, published_at, fetched_at, media_json, import_error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(versionId, existing.id, versionNumber, title, author, body, contentHash(body), publishedAt, fetchedAt, media, importError, timestamp);
+      this.db.prepare(`UPDATE documents SET current_version_id = ?, title = ?, author = ?, url = ?, published_at = ?, fetched_at = ?, media_json = ?, import_error = ?, updated_at = ? WHERE id = ?`)
+        .run(versionId, title, author, url, publishedAt, fetchedAt, media, importError, timestamp, existing.id);
       this._refreshSearchIndex(existing.id);
       return { documentId: existing.id, versionId, created: false, versionCreated: true };
     }
 
-    this.db.prepare('UPDATE documents SET title = ?, author = ?, url = ?, updated_at = ? WHERE id = ?')
-      .run(title, author, url, timestamp, existing.id);
+    this.db.prepare('UPDATE documents SET title = ?, author = ?, url = ?, published_at = ?, fetched_at = ?, media_json = ?, import_error = ?, updated_at = ? WHERE id = ?')
+      .run(title, author, url, publishedAt, fetchedAt, media, importError, timestamp, existing.id);
     this._refreshSearchIndex(existing.id);
     return { documentId: existing.id, versionId: existing.current_version_id, created: false, versionCreated: false };
   }
@@ -326,6 +354,28 @@ export class KnowledgeDatabase {
       return this.db.transaction(() => inputs.map((input) => this._upsertDocument(input)))();
     } catch (error) {
       throw dbError('批量导入', error);
+    }
+  }
+
+  recordImportError(input) {
+    const source = text(input?.source).trim();
+    const externalId = text(input?.externalId).trim();
+    const importError = text(input?.importError).trim();
+    if (!source || !externalId || !importError) throw new DatabaseError('导入错误必须包含 source、external_id 和状态', 'VALIDATION_ERROR');
+    try {
+      return this.db.transaction(() => {
+        const existing = this.db.prepare('SELECT * FROM documents WHERE source = ? AND external_id = ?').get(source, externalId);
+        const timestamp = now();
+        if (!existing) {
+          return this._upsertDocument({ ...input, body: '', fetchedAt: input?.fetchedAt ?? timestamp, importError });
+        }
+        this.db.prepare(`UPDATE documents SET title = COALESCE(?, title), author = COALESCE(?, author), url = COALESCE(?, url),
+          published_at = COALESCE(?, published_at), fetched_at = ?, import_error = ?, updated_at = ? WHERE id = ?`)
+          .run(nullableText(input?.title), nullableText(input?.author), nullableText(input?.url), nullableText(input?.publishedAt), input?.fetchedAt ?? timestamp, importError, timestamp, existing.id);
+        return { documentId: existing.id, versionId: existing.current_version_id, created: false, versionCreated: false, importError };
+      })();
+    } catch (error) {
+      throw dbError('记录导入错误', error);
     }
   }
 
@@ -487,7 +537,7 @@ export class KnowledgeDatabase {
     if (!rows.length) return;
     const columns = TABLE_COLUMNS[table];
     const statement = this.db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
-    for (const row of rows) statement.run(...columns.map((column) => row[column] ?? null));
+    for (const row of rows) statement.run(...columns.map((column) => row[column] ?? (column === 'media_json' ? '[]' : null)));
   }
 }
 
