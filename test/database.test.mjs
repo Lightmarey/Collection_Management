@@ -19,7 +19,7 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   const directory = tempDirectory();
   const databasePath = path.join(directory, 'knowledge.sqlite');
   const database = openKnowledgeDatabase(databasePath);
-  assert.equal(database.schemaVersion, 1);
+  assert.equal(database.schemaVersion, 2);
   const backup = database.exportJson();
   assert.deepEqual(database.checkJsonBackup(backup).valid, true);
   database.close();
@@ -33,10 +33,10 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   assert.equal(raw.pragma('journal_mode', { simple: true }), 'wal');
   assert.throws(() => migrateDatabase(raw, [
     { version: 1, up() {} },
-    { version: 2, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
+    { version: 3, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
   ]), /数据库迁移失败/);
   assert.equal(raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'transient_migration_table'").get(), undefined);
-  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 1);
+  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
   raw.close();
   closeAndRemove(directory);
 });
