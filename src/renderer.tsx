@@ -37,6 +37,7 @@ function formatDate(value: string | null | undefined) {
 function errorLabel(error: string | undefined) {
   return {
     database_unavailable: '本地数据库不可用，请检查磁盘权限后重启。',
+    database_repair_required: '本地数据库无法打开。应用已保留启动备份，请关闭应用后使用 knowledge.sqlite.startup.bak 修复或恢复数据。',
     database_read_failed: '读取本地数据失败。',
     document_not_found: '文档已不存在或已被删除。',
     ANCHOR_NOT_FOUND: '引文已不在当前正文中，请重新选择正文位置。',
@@ -44,6 +45,22 @@ function errorLabel(error: string | undefined) {
     VALIDATION_ERROR: '标注内容不能为空。',
     corrupt: '正文数据损坏，无法安全显示。',
   }[error ?? ''] ?? '本地阅读数据暂时不可用。';
+}
+
+function syncFailureLabel(error: string | null | undefined) {
+  return {
+    login_expired: '登录已失效，请重新登录知乎。',
+    rate_limited: '请求过于频繁，请稍后再试。',
+    captcha: '知乎要求完成安全验证，请在登录窗口中处理。',
+    paid_or_no_permission: '内容无权限或属于付费内容，已跳过。',
+    structure_changed: '知乎返回结构发生变化，已停止同步。',
+    http_error: '网络请求失败，请检查网络后重试。',
+    stopped: '同步已停止。',
+  }[error ?? ''] ?? '同步失败，请重试。';
+}
+
+function syncStatusLabel(status: string) {
+  return ({ queued: '排队中', running: '进行中', paused: '已暂停', completed: '已完成', stopped: '已停止', cancelled: '已取消', failed: '失败' }[status] ?? status);
 }
 
 function safeReaderHtml(body: string) {
@@ -112,13 +129,15 @@ function App() {
   const syncActive = syncJob && ['queued', 'running', 'paused'].includes(syncJob.status);
   const syncProgress = syncJob?.payload.progress;
   const syncFailures = syncJob?.payload.items?.filter((item) => item.status === 'failed') ?? [];
+  const syncCreated = syncJob?.payload.items?.filter((item) => item.status === 'completed' && item.created).length ?? 0;
+  const syncUpdated = syncJob?.payload.items?.filter((item) => item.status === 'completed' && item.versionCreated && !item.created).length ?? 0;
 
   const selectedDocument = useMemo(() => documents.find((document) => document.id === selectedId) ?? null, [documents, selectedId]);
   const filterLabel = FILTERS.find((item) => item.key === filter)?.label ?? 'Inbox';
 
   const loadList = useCallback(async (preferredId?: string | null) => {
     setListLoading(true);
-    const result = await window.desktop.readerBootstrap({ filter, query, sort, limit: 120 });
+    const result = await window.desktop.readerBootstrap({ filter, query, sort, limit: 10000 });
     if (!result.ok) {
       setStatus(errorLabel(result.error));
       setDocuments([]);
@@ -146,14 +165,16 @@ function App() {
     if (lastSyncedStatus.current === syncStatus) return;
     lastSyncedStatus.current = syncStatus;
     if (!['completed', 'stopped', 'cancelled', 'failed'].includes(syncStatus)) return;
+    if (syncStatus === 'completed') setStatus(`同步完成：新增 ${syncCreated} 篇，更新 ${syncUpdated} 篇，跳过 ${syncProgress?.skipped ?? 0} 篇`);
+    else setStatus(`同步${syncStatusLabel(syncStatus)}：${syncFailureLabel(syncJob?.lastError ?? syncJob?.payload.failureType)}`);
     void loadList();
-  }, [loadList, syncJob?.status]);
+  }, [loadList, syncCreated, syncJob?.lastError, syncJob?.payload.failureType, syncJob?.status, syncProgress?.skipped, syncUpdated]);
 
   useEffect(() => {
     let active = true;
     void window.desktop.ping().then(({ ok, database }) => {
       if (!active) return;
-      setStatus(!ok ? 'IPC 不可用' : database.ok ? `本地数据库 schema v${database.schemaVersion}` : errorLabel('database_unavailable'));
+      setStatus(!ok ? 'IPC 不可用' : database.ok ? `本地数据库 schema v${database.schemaVersion}` : errorLabel(database.error));
       if (new URLSearchParams(window.location.search).has('smoke')) void window.desktop.smokeReady();
     }).catch(() => { if (active) setStatus('IPC 连接失败'); });
     return () => { active = false; };
@@ -318,7 +339,8 @@ function App() {
                 });
               }}>开始增量同步</button>
               {syncJob && <div>
-                <p>同步状态：{syncJob.status}；已完成 {syncProgress?.completed ?? 0}/{syncProgress?.total ?? 0}，失败 {syncProgress?.failed ?? 0}，剩余 {syncProgress?.remaining ?? 0}；请求 {syncJob.payload.accessLog?.length ?? 0} 次</p>
+                <p role="status">同步状态：{syncStatusLabel(syncJob.status)}；已处理 {(syncProgress?.completed ?? 0) + (syncProgress?.skipped ?? 0)}/{syncProgress?.total ?? 0}，新增 {syncCreated}，更新 {syncUpdated}，跳过 {syncProgress?.skipped ?? 0}，失败 {syncProgress?.failed ?? 0}，剩余 {syncProgress?.remaining ?? 0}；请求 {syncJob.payload.accessLog?.length ?? 0} 次</p>
+                {['stopped', 'cancelled', 'failed'].includes(syncJob.status) && <p className="sync-warning">{syncFailureLabel(syncJob.lastError ?? syncJob.payload.failureType)}</p>}
                 {syncJob.status === 'running' && <button type="button" onClick={() => void window.desktop.pauseZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>暂停</button>}
                 {syncJob.status === 'paused' && <button type="button" onClick={() => void window.desktop.resumeZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>继续</button>}
                 {syncActive && <button type="button" onClick={() => void window.desktop.cancelZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>取消同步</button>}

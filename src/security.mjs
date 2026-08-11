@@ -9,6 +9,15 @@ export function isAllowedZhihuUrl(value) {
   }
 }
 
+export function isAllowedZhihuAssetUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && (isAllowedZhihuUrl(value) || url.hostname === 'zhimg.com' || url.hostname.endsWith('.zhimg.com'));
+  } catch {
+    return false;
+  }
+}
+
 export function isLocalUiUrl(value, devServerUrl = '') {
   if (value.startsWith('file://')) return true;
   return Boolean(devServerUrl) && value.startsWith(devServerUrl);

@@ -24,7 +24,7 @@ test('repeats a redacted twenty-item sync, continues after one item failure, and
   });
 
   assert.equal(result.status, SYNC_STATUS.COMPLETED);
-  assert.deepEqual(result.progress, { total: 20, completed: 19, failed: 1, remaining: 0 });
+  assert.deepEqual(result.progress, { total: 20, completed: 19, failed: 1, skipped: 0, remaining: 0 });
   assert.equal(processed.length, 20);
   assert.equal(progress.at(-1).items.find((item) => item.externalId === 'sample-7').failureType, FAILURE_TYPES.UNAVAILABLE);
   assert.ok(!JSON.stringify(result).includes('BODY'));
@@ -47,4 +47,24 @@ test('stops safely when a single response signals login expiry', async () => {
   assert.equal(result.failureType, FAILURE_TYPES.LOGIN_EXPIRED);
   assert.equal(calls, 1);
   assert.equal(result.progress.remaining, 1);
+});
+
+test('skips unchanged items without fetching their正文', async () => {
+  let fetched = 0;
+  const result = await runCollectionSync({
+    capture: async () => ({ ok: true, items: [
+      { externalId: 'unchanged', status: 'ok' },
+      { externalId: 'changed', status: 'ok' },
+    ] }),
+    shouldFetchItem: async (item) => item.externalId === 'changed',
+    fetchDocument: async (item) => {
+      fetched += 1;
+      return { ok: true, documentId: item.externalId, created: false, versionCreated: true };
+    },
+  });
+
+  assert.equal(fetched, 1);
+  assert.equal(result.progress.skipped, 1);
+  assert.equal(result.items[0].status, 'skipped');
+  assert.equal(result.items[1].versionCreated, true);
 });

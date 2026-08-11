@@ -125,8 +125,8 @@ type SyncJob = {
   updatedAt: string;
   payload: {
     source?: { type?: string; externalId?: string; url?: string | null };
-    items?: Array<{ externalId: string; kind: string; url: string | null; status: string; failureType?: string | null; documentId?: string; versionCreated?: boolean }>;
-    progress?: { total: number; completed: number; failed: number; remaining: number };
+    items?: Array<{ externalId: string; kind: string; url: string | null; status: string; failureType?: string | null; documentId?: string; created?: boolean; versionCreated?: boolean }>;
+    progress?: { total: number; completed: number; failed: number; skipped: number; remaining: number };
     phase?: string;
     failureType?: string | null;
     accessLog?: Array<{ at: string; kind: string; delayMs: number | null }>;

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { FAILURE_TYPES } from './zhihu-m0.mjs';
 
 export const SYNC_STATUS = Object.freeze({
@@ -17,11 +18,22 @@ function failureType(value) {
   return typeof value === 'string' && value ? value : FAILURE_TYPES.HTTP_ERROR;
 }
 
+export function syncItemHash(item = {}) {
+  return createHash('sha256').update(JSON.stringify({
+    externalId: item.externalId ?? null,
+    url: item.url ?? null,
+    titleHash: item.titleHash ?? null,
+    contentHash: item.contentHash ?? null,
+    status: item.status ?? null,
+  })).digest('hex');
+}
+
 export async function runCollectionSync({
   capture,
   fetchDocument,
   controls = {},
   onProgress = () => {},
+  shouldFetchItem = async () => true,
 } = {}) {
   if (typeof capture !== 'function' || typeof fetchDocument !== 'function') throw new TypeError('capture and fetchDocument are required');
 
@@ -38,12 +50,14 @@ export async function runCollectionSync({
     url: item.url ?? null,
     status: item.status === 'ok' ? 'pending' : 'failed',
     failureType: item.status === 'ok' ? null : failureType(item.status),
+    skipped: false,
   }));
 
   const progress = () => ({
     total: states.length,
     completed: states.filter((item) => item.status === 'completed').length,
     failed: states.filter((item) => item.status === 'failed').length,
+    skipped: states.filter((item) => item.status === 'skipped').length,
     remaining: states.filter((item) => item.status === 'pending').length,
   });
   const report = (extra = {}) => onProgress({ items: states.map((item) => ({ ...item })), progress: progress(), ...extra });
@@ -66,12 +80,20 @@ export async function runCollectionSync({
       return { status: SYNC_STATUS.CANCELLED, failureType: FAILURE_TYPES.STOPPED, items: states, progress: progress(), capture: captured };
     }
 
+    if (!(await shouldFetchItem(items[index]))) {
+      state.status = 'skipped';
+      state.skipped = true;
+      report({ phase: 'item', currentExternalId: state.externalId });
+      continue;
+    }
+
     try {
       const result = await fetchDocument(items[index], index);
       if (result?.ok) {
         state.status = 'completed';
         state.failureType = null;
         state.documentId = result.documentId;
+        state.created = result.created === true;
         state.versionCreated = result.versionCreated === true;
       } else {
         state.status = 'failed';

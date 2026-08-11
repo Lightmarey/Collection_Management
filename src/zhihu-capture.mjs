@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage } from "./zhihu-m0.mjs";
 
 export const PAGE_SIZE = 20;
-export const MAX_ITEMS = 20;
 export const MIN_REQUEST_DELAY_MS = 1200;
 
 function target(value, kind, id, pageUrl, apiBase, itemsUrl, mode) {
@@ -99,7 +98,7 @@ export async function captureCollection(value, {
     collectionId: target.id,
     itemCount: items.length,
     pageCount,
-    items: items.slice(0, MAX_ITEMS),
+    items,
     ...extra,
   });
 
@@ -109,8 +108,11 @@ export async function captureCollection(value, {
   const metadataFailure = failure(metadata);
   if (metadataFailure) return result({ failureType: metadataFailure });
 
-  while (nextUrl && items.length < MAX_ITEMS) {
+  const visitedPages = new Set();
+  while (nextUrl) {
     if (isStopped()) return result({ nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
+    if (visitedPages.has(nextUrl)) return result({ nextPageAvailable: true, failureType: FAILURE_TYPES.STRUCTURE_CHANGED });
+    visitedPages.add(nextUrl);
     if (pageCount > 0) await wait(MIN_REQUEST_DELAY_MS);
     if (isStopped() || !(await beforeRequest())) return result({ nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
     await onRequest({ kind: "items" });
@@ -121,7 +123,7 @@ export async function captureCollection(value, {
 
     const normalized = normalizeCollectionPage(response.payload);
     if (normalized.status !== "ok") return result({ nextPageAvailable, failureType: normalized.status });
-    items.push(...normalized.items.slice(0, MAX_ITEMS - items.length));
+    items.push(...normalized.items);
     nextPageAvailable = normalized.nextPage;
     if (!normalized.nextPage) break;
 
@@ -132,7 +134,7 @@ export async function captureCollection(value, {
     nextUrl = candidate;
   }
 
-  return result({ nextPageAvailable, truncated: items.length >= MAX_ITEMS && nextPageAvailable });
+  return result({ nextPageAvailable, truncated: false });
 }
 
 function activityIsLike(item) {
@@ -190,13 +192,16 @@ export async function captureSource(value, {
     sourceId: source.id,
     itemCount: items.length,
     pageCount,
-    items: items.slice(0, MAX_ITEMS),
+    items,
     ...extra,
   });
   if (isStopped() || !(await beforeRequest())) return result({ failureType: FAILURE_TYPES.STOPPED });
   await onRequest({ kind: "items" });
-  while (nextUrl && items.length < MAX_ITEMS) {
+  const visitedPages = new Set();
+  while (nextUrl) {
     if (isStopped()) return result({ nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
+    if (visitedPages.has(nextUrl)) return result({ nextPageAvailable: true, failureType: FAILURE_TYPES.STRUCTURE_CHANGED });
+    visitedPages.add(nextUrl);
     if (pageCount > 0) await wait(MIN_REQUEST_DELAY_MS);
     if (pageCount > 0 && !(await beforeRequest())) return result({ nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
     if (pageCount > 0) await onRequest({ kind: "items" });
@@ -206,12 +211,12 @@ export async function captureSource(value, {
     if (responseFailure) return result({ nextPageAvailable, failureType: responseFailure });
     const normalized = normalizeSourceItems(response.payload, source.mode);
     if (normalized.status !== "ok") return result({ nextPageAvailable, failureType: normalized.status });
-    items.push(...normalized.items.slice(0, MAX_ITEMS - items.length));
+    items.push(...normalized.items);
     nextPageAvailable = normalized.nextPage;
     if (!normalized.nextPage) break;
     const candidate = response.payload?.paging?.next;
     if (!isAllowedNextUrl(candidate, source) || candidate === nextUrl) return result({ nextPageAvailable: true, failureType: FAILURE_TYPES.STRUCTURE_CHANGED });
     nextUrl = candidate;
   }
-  return result({ nextPageAvailable, truncated: items.length >= MAX_ITEMS && nextPageAvailable });
+  return result({ nextPageAvailable, truncated: false });
 }

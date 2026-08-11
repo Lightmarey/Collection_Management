@@ -50,7 +50,8 @@ export class KnowledgeDatabase {
   readonly schemaVersion: number;
   close(): void;
   upsertCollection(input: { id?: string; source: string; externalId: string; name?: string; description?: string }): { collectionId: string; created: boolean };
-  linkCollectionDocument(collectionId: string, documentId: string, position?: number): { collectionId: string; documentId: string; position: number };
+  linkCollectionDocument(collectionId: string, documentId: string, position?: number, syncHash?: string | null): { collectionId: string; documentId: string; position: number; syncHash: string | null };
+  getCollectionItemSyncHash(collectionId: string, externalId: string): string | null;
   createSyncJob(input: { type?: string; source: string; externalId: string; url?: string | null }): SyncJob;
   getSyncJob(jobId: string): SyncJob;
   updateSyncJob(jobId: string, input?: { status?: string; payload?: Record<string, unknown>; payloadPatch?: Record<string, unknown>; lastError?: string | null; incrementAttempts?: boolean }): SyncJob;

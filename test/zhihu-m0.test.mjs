@@ -56,27 +56,29 @@ test("hashes string content in nested collection items without retaining it", ()
   assert.ok(!JSON.stringify(result).includes("SAMPLE_BODY"));
 });
 
-test("runs the capture flow headlessly and stops at twenty items", async () => {
+test("runs the capture flow through every collection page", async () => {
   const calls = [];
   const result = await captureCollection("https://www.zhihu.com/collection/123", {
     fetchJson: async (url) => {
       calls.push(url);
       if (url.endsWith("/123")) return { status: 200, payload: {}, marker: "none" };
+      const page = new URL(url).searchParams.get('offset');
       return {
         status: 200,
         marker: "none",
         payload: {
-          data: Array.from({ length: 20 }, (_, index) => ({ id: `item-${index}`, title: "[SAMPLE]" })),
-          paging: { is_end: false, next: "https://www.zhihu.com/api/v4/collections/123/items?offset=20&limit=20" },
+          data: Array.from({ length: page === '20' ? 3 : 20 }, (_, index) => ({ id: `item-${page ?? '0'}-${index}`, title: "[SAMPLE]" })),
+          paging: page === '20' ? { is_end: true } : { is_end: false, next: "https://www.zhihu.com/api/v4/collections/123/items?offset=20&limit=20" },
         },
       };
     },
     wait: async () => {},
   });
   assert.equal(result.ok, true);
-  assert.equal(result.itemCount, 20);
-  assert.equal(result.truncated, true);
-  assert.equal(calls.length, 2);
+  assert.equal(result.itemCount, 23);
+  assert.equal(result.truncated, false);
+  assert.equal(result.pageCount, 2);
+  assert.equal(calls.length, 3);
   assert.ok(!JSON.stringify(result).includes("SAMPLE"));
 });
 

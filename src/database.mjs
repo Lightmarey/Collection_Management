@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createTextAnchor, locateTextAnchor, plainText } from './annotation-anchor.mjs';
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 const BACKUP_TABLES = [
   'documents',
@@ -27,7 +27,7 @@ const TABLE_COLUMNS = {
   documents: ['id', 'source', 'external_id', 'current_version_id', 'title', 'author', 'url', 'published_at', 'fetched_at', 'media_json', 'import_error', 'created_at', 'updated_at'],
   document_versions: ['id', 'document_id', 'version_number', 'title', 'author', 'body', 'content_hash', 'published_at', 'fetched_at', 'media_json', 'import_error', 'created_at'],
   collections: ['id', 'source', 'external_id', 'name', 'description', 'created_at', 'updated_at'],
-  collection_items: ['collection_id', 'document_id', 'position', 'created_at'],
+  collection_items: ['collection_id', 'document_id', 'position', 'sync_hash', 'created_at'],
   highlights: ['id', 'document_id', 'document_version_id', 'quote', 'exact', 'prefix', 'suffix', 'start_offset', 'end_offset', 'resolved_start', 'resolved_end', 'status', 'color', 'created_at', 'updated_at'],
   notes: ['id', 'document_id', 'document_version_id', 'body', 'exact', 'prefix', 'suffix', 'start_offset', 'end_offset', 'resolved_start', 'resolved_end', 'status', 'created_at', 'updated_at'],
   tags: ['id', 'name', 'created_at'],
@@ -252,6 +252,12 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 5,
+    up(db) {
+      db.exec('ALTER TABLE collection_items ADD COLUMN sync_hash TEXT');
+    },
+  },
 ];
 
 const READING_STATUSES = new Set(['unread', 'reading', 'processed', 'archived']);
@@ -399,17 +405,33 @@ export class KnowledgeDatabase {
     }
   }
 
-  linkCollectionDocument(collectionId, documentId, position = 0) {
+  linkCollectionDocument(collectionId, documentId, position = 0, syncHash = null) {
     const collection = text(collectionId).trim();
     const document = text(documentId).trim();
     if (!collection || !document) throw new DatabaseError('来源关系必须包含 collection_id 和 document_id', 'VALIDATION_ERROR');
     try {
-      this.db.prepare(`INSERT INTO collection_items (collection_id, document_id, position, created_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(collection_id, document_id) DO UPDATE SET position = excluded.position`).run(collection, document, Math.max(0, Number(position) || 0), now());
-      return { collectionId: collection, documentId: document, position: Math.max(0, Number(position) || 0) };
+      const normalizedHash = nullableText(syncHash);
+      this.db.prepare(`INSERT INTO collection_items (collection_id, document_id, position, sync_hash, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(collection_id, document_id) DO UPDATE SET position = excluded.position, sync_hash = excluded.sync_hash`).run(collection, document, Math.max(0, Number(position) || 0), normalizedHash, now());
+      return { collectionId: collection, documentId: document, position: Math.max(0, Number(position) || 0), syncHash: normalizedHash };
     } catch (error) {
       throw dbError('写入来源关系', error);
+    }
+  }
+
+  getCollectionItemSyncHash(collectionId, externalId) {
+    const collection = text(collectionId).trim();
+    const external = text(externalId).trim();
+    if (!collection || !external) return null;
+    try {
+      const row = this.db.prepare(`SELECT ci.sync_hash AS syncHash
+        FROM collection_items ci JOIN collections c ON c.id = ci.collection_id
+        JOIN documents d ON d.id = ci.document_id
+        WHERE ci.collection_id = ? AND d.external_id = ?`).get(collection, external);
+      return row?.syncHash ?? null;
+    } catch (error) {
+      throw dbError('读取同步摘要', error);
     }
   }
 
@@ -839,7 +861,7 @@ export class KnowledgeDatabase {
 
   listDocuments({ filter = 'inbox', query = '', sort = 'updated', limit = 100, offset = 0 } = {}) {
     const value = text(query).trim();
-    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
+    const safeLimit = Math.max(1, Math.min(10000, Number(limit) || 100));
     const safeOffset = Math.max(0, Number(offset) || 0);
     const conditions = [];
     const params = [];

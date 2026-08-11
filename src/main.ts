@@ -2,10 +2,10 @@
 
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
-import { isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
+import { isAllowedZhihuAssetUrl, isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
 import { FAILURE_TYPES } from './zhihu-m0.mjs';
 import { captureCollection, captureSource, collectionTarget, sourceTarget } from './zhihu-capture.mjs';
-import { runCollectionSync, SYNC_STATUS } from './zhihu-sync.mjs';
+import { runCollectionSync, syncItemHash, SYNC_STATUS } from './zhihu-sync.mjs';
 import { openKnowledgeDatabase, type KnowledgeDatabase } from './database.mjs';
 import { importUrl, parseDocument, type ParsedDocument } from './document-import.mjs';
 
@@ -18,6 +18,7 @@ let remoteWindow: BrowserWindow | null = null;
 let collectionCaptureInProgress = false;
 let collectionCaptureStopRequested = false;
 let knowledgeDatabase: KnowledgeDatabase | null = null;
+let databaseStartupError = 'database_unavailable';
 let activeSync: { jobId: string; state: 'running' | 'paused' | 'cancelled'; lastRequestAt: number | null } | null = null;
 
 app.setPath('userData', path.join(app.getPath('appData'), ZHIHU_USER_DATA_DIR));
@@ -157,6 +158,52 @@ async function fetchHtmlInRemoteSession(contents: Electron.WebContents, url: str
   }
 }
 
+async function fetchMediaDataUrlInRemoteSession(contents: Electron.WebContents, url: string): Promise<string | null> {
+  if (!isAllowedZhihuAssetUrl(url)) return null;
+  const script = `
+    (async () => {
+      const response = await fetch(${JSON.stringify(url)}, {
+        credentials: 'include',
+        signal: AbortSignal.timeout(${ZHIHU_REQUEST_TIMEOUT_MS}),
+      });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      if (!blob.type.startsWith('image/')) return null;
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    })()
+  `;
+  try {
+    return await Promise.race([
+      contents.executeJavaScript(script, true) as Promise<string | null>,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), ZHIHU_REQUEST_TIMEOUT_MS)),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+async function localizeDocumentMedia(document: ParsedDocument, window: BrowserWindow): Promise<ParsedDocument> {
+  const mediaRefs = Array.isArray(document.mediaRefs) ? document.mediaRefs : [];
+  let body = document.body;
+  const localized = [];
+  for (const media of mediaRefs) {
+    const mediaUrl = typeof media.url === 'string' ? media.url : '';
+    const dataUrl = media.type === 'img' ? await fetchMediaDataUrlInRemoteSession(window.webContents, mediaUrl) : null;
+    if (dataUrl) {
+      body = body.replaceAll(mediaUrl, dataUrl);
+      localized.push({ ...media, url: dataUrl, local: true });
+    } else {
+      localized.push({ ...media, local: false });
+    }
+  }
+  return { ...document, body, mediaRefs: localized };
+}
+
 async function loadRemotePage(window: BrowserWindow, url: string) {
   if (window.webContents.getURL() === url) return;
   await Promise.race([
@@ -180,8 +227,11 @@ type SyncItem = {
   kind: string;
   url: string | null;
   status: string;
+  titleHash?: string;
+  contentHash?: string | null;
   failureType?: string | null;
   documentId?: string;
+  created?: boolean;
   versionCreated?: boolean;
 };
 
@@ -190,6 +240,7 @@ function summarizeSyncItems(items: SyncItem[]) {
     total: items.length,
     completed: items.filter((item) => item.status === 'completed').length,
     failed: items.filter((item) => item.status === 'failed').length,
+    skipped: items.filter((item) => item.status === 'skipped').length,
     remaining: items.filter((item) => item.status === 'pending').length,
   };
 }
@@ -237,9 +288,9 @@ async function importSyncItem(jobId: string, sourceId: string, item: SyncItem, p
     },
   });
   if (result.ok && result.document) {
-    const write = knowledgeDatabase.upsertDocument(result.document);
-    knowledgeDatabase.linkCollectionDocument(sourceId, write.documentId, position);
-    return { ok: true, documentId: write.documentId, versionCreated: write.versionCreated };
+    const write = knowledgeDatabase.upsertDocument(await localizeDocumentMedia(result.document, window));
+    knowledgeDatabase.linkCollectionDocument(sourceId, write.documentId, position, syncItemHash(item));
+    return { ok: true, documentId: write.documentId, created: write.created, versionCreated: write.versionCreated };
   }
 
   if (result.source && result.externalId) {
@@ -290,6 +341,8 @@ async function executeSyncJob(jobId: string, sourceUrl: string, retryExternalId:
         }),
       fetchDocument: (rawItem, position: number) => importSyncItem(jobId, source.collectionId, rawItem as unknown as SyncItem, position, remote),
       controls,
+      shouldFetchItem: async (item) => item.status !== 'ok'
+        || knowledgeDatabase?.getCollectionItemSyncHash(source.collectionId, String(item.externalId ?? '')) !== syncItemHash(item),
       onProgress: ({ items, progress, phase, currentExternalId }) => {
         const current = knowledgeDatabase?.getSyncJob(jobId);
         const merged = mergeSyncItems((current?.payload.items as SyncItem[] | undefined) ?? [], items as SyncItem[]);
@@ -410,7 +463,7 @@ ipcMain.handle('app:ping', (event) => {
   assertTrustedLocalSender(event.sender);
   return knowledgeDatabase
     ? { ok: true, database: { ok: true, schemaVersion: knowledgeDatabase.schemaVersion } }
-    : { ok: true, database: { ok: false, error: '本地数据库初始化失败，请检查磁盘权限后重启' } };
+    : { ok: true, database: { ok: false, error: databaseStartupError } };
 });
 
 ipcMain.handle('zhihu:login', (event) => {
@@ -549,7 +602,7 @@ ipcMain.handle('document:import-url', async (event, url?: unknown) => {
     const window = createRemoteWindow(target);
     await loadRemotePage(window, target);
     const result = await importUrl(target, { fetchHtml: (sourceUrl) => fetchHtmlInRemoteSession(window.webContents, sourceUrl) });
-    return persistImportResult(result);
+    return persistImportResult(result.ok && result.document ? { ...result, document: await localizeDocumentMedia(result.document, window) } : result);
   } catch {
     return persistImportResult({ ok: false, status: FAILURE_TYPES.HTTP_ERROR, source: 'zhihu', externalId: typeof url === 'string' ? url : '' });
   }
@@ -681,6 +734,7 @@ app.on('ready', () => {
   try {
     knowledgeDatabase = openKnowledgeDatabase(path.join(app.getPath('userData'), 'knowledge.sqlite'));
   } catch (error) {
+    databaseStartupError = 'database_repair_required';
     log('database-startup-failed', { code: error instanceof Error && 'code' in error ? error.code : 'DATABASE_ERROR' });
   }
   configureZhihuSession();
