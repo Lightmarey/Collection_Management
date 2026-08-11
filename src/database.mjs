@@ -307,6 +307,15 @@ function schemaMigrationsExist(db) {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get());
 }
 
+function parsePayload(value) {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export function migrateDatabase(db, migrations = MIGRATIONS) {
   try {
     if (!schemaMigrationsExist(db)) {
@@ -364,6 +373,123 @@ export class KnowledgeDatabase {
 
   close() {
     if (this.db.open) this.db.close();
+  }
+
+  upsertCollection(input) {
+    const source = text(input?.source).trim();
+    const externalId = text(input?.externalId).trim();
+    if (!source || !externalId) throw new DatabaseError('来源必须包含 source 和 external_id', 'VALIDATION_ERROR');
+    try {
+      return this.db.transaction(() => {
+        const timestamp = now();
+        const name = text(input?.name).trim() || externalId;
+        const description = text(input?.description);
+        const existing = this.db.prepare('SELECT id FROM collections WHERE source = ? AND external_id = ?').get(source, externalId);
+        if (existing) {
+          this.db.prepare('UPDATE collections SET name = ?, description = ?, updated_at = ? WHERE id = ?').run(name, description, timestamp, existing.id);
+          return { collectionId: existing.id, created: false };
+        }
+        const collectionId = input?.id || randomUUID();
+        this.db.prepare(`INSERT INTO collections (id, source, external_id, name, description, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`).run(collectionId, source, externalId, name, description, timestamp, timestamp);
+        return { collectionId, created: true };
+      })();
+    } catch (error) {
+      throw dbError('写入来源', error);
+    }
+  }
+
+  linkCollectionDocument(collectionId, documentId, position = 0) {
+    const collection = text(collectionId).trim();
+    const document = text(documentId).trim();
+    if (!collection || !document) throw new DatabaseError('来源关系必须包含 collection_id 和 document_id', 'VALIDATION_ERROR');
+    try {
+      this.db.prepare(`INSERT INTO collection_items (collection_id, document_id, position, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(collection_id, document_id) DO UPDATE SET position = excluded.position`).run(collection, document, Math.max(0, Number(position) || 0), now());
+      return { collectionId: collection, documentId: document, position: Math.max(0, Number(position) || 0) };
+    } catch (error) {
+      throw dbError('写入来源关系', error);
+    }
+  }
+
+  createSyncJob(input = {}) {
+    const source = text(input.source).trim();
+    const externalId = text(input.externalId).trim();
+    if (!source || !externalId) throw new DatabaseError('同步任务必须包含来源', 'VALIDATION_ERROR');
+    try {
+      const timestamp = now();
+      const taskId = randomUUID();
+      const jobId = randomUUID();
+      const payload = {
+        kind: 'zhihu-sync',
+        source: { type: text(input.type) || 'collection', externalId, url: text(input.url) || null },
+        items: [],
+        progress: { total: 0, completed: 0, failed: 0, remaining: 0 },
+        accessLog: [],
+      };
+      this.db.transaction(() => {
+        this.db.prepare(`INSERT INTO tasks (id, task_type, status, payload_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)`).run(taskId, 'zhihu_sync', 'queued', JSON.stringify(payload), timestamp, timestamp);
+        this.db.prepare(`INSERT INTO jobs (id, task_id, status, attempts, last_error, created_at, updated_at)
+          VALUES (?, ?, ?, 0, NULL, ?, ?)`).run(jobId, taskId, 'queued', timestamp, timestamp);
+      })();
+      return this.getSyncJob(jobId);
+    } catch (error) {
+      throw dbError('创建同步任务', error);
+    }
+  }
+
+  getSyncJob(jobId) {
+    const id = text(jobId).trim();
+    if (!id) throw new DatabaseError('同步任务 ID 不能为空', 'VALIDATION_ERROR');
+    try {
+      const row = this.db.prepare(`SELECT j.id, j.task_id, j.status, j.attempts, j.last_error, j.created_at, j.updated_at,
+          t.payload_json
+        FROM jobs j JOIN tasks t ON t.id = j.task_id WHERE j.id = ?`).get(id);
+      if (!row) throw new DatabaseError('同步任务不存在', 'JOB_NOT_FOUND');
+      return {
+        id: row.id,
+        taskId: row.task_id,
+        status: row.status,
+        attempts: row.attempts,
+        lastError: row.last_error,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        payload: parsePayload(row.payload_json),
+      };
+    } catch (error) {
+      if (error instanceof DatabaseError) throw error;
+      throw dbError('读取同步任务', error);
+    }
+  }
+
+  updateSyncJob(jobId, { status, payload, payloadPatch, lastError, incrementAttempts = false } = {}) {
+    const current = this.getSyncJob(jobId);
+    const nextPayload = payload ?? { ...current.payload, ...(payloadPatch ?? {}) };
+    const nextStatus = status ?? current.status;
+    const nextError = Object.prototype.hasOwnProperty.call(arguments[1] ?? {}, 'lastError') ? lastError : current.lastError;
+    try {
+      const timestamp = now();
+      this.db.transaction(() => {
+        this.db.prepare('UPDATE tasks SET status = ?, payload_json = ?, updated_at = ? WHERE id = ?')
+          .run(nextStatus, JSON.stringify(nextPayload), timestamp, current.taskId);
+        this.db.prepare(`UPDATE jobs SET status = ?, attempts = attempts + ?, last_error = ?, updated_at = ? WHERE id = ?`)
+          .run(nextStatus, incrementAttempts ? 1 : 0, nextError, timestamp, current.id);
+      })();
+      return this.getSyncJob(current.id);
+    } catch (error) {
+      throw dbError('更新同步任务', error);
+    }
+  }
+
+  recordSyncRequest(jobId, { kind = 'unknown', at = now(), delayMs = null } = {}) {
+    const current = this.getSyncJob(jobId);
+    const accessLog = Array.isArray(current.payload.accessLog) ? current.payload.accessLog.slice(-999) : [];
+    const previous = accessLog.at(-1);
+    const observedDelay = delayMs == null && previous ? Math.max(0, Date.parse(at) - Date.parse(previous.at)) : delayMs;
+    accessLog.push({ at, kind: text(kind), delayMs: Number.isFinite(Number(observedDelay)) ? Number(observedDelay) : null });
+    return this.updateSyncJob(jobId, { payloadPatch: { accessLog, requestCount: accessLog.length, lastRequestAt: at } });
   }
 
   _upsertDocument(input) {

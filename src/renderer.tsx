@@ -96,6 +96,22 @@ function App() {
   const readerPaneRef = useRef<HTMLElement>(null);
   const articleBodyRef = useRef<HTMLDivElement>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedStatus = useRef<string | undefined>(undefined);
+  const [syncJob, setSyncJob] = useState<Awaited<ReturnType<typeof window.desktop.startZhihuSync>>['job']>();
+
+  useEffect(() => {
+    if (!syncJob?.id) return undefined;
+    const timer = window.setInterval(() => {
+      void window.desktop.getZhihuSyncStatus(syncJob.id).then((result) => {
+        if (result.job) setSyncJob(result.job);
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [syncJob?.id]);
+
+  const syncActive = syncJob && ['queued', 'running', 'paused'].includes(syncJob.status);
+  const syncProgress = syncJob?.payload.progress;
+  const syncFailures = syncJob?.payload.items?.filter((item) => item.status === 'failed') ?? [];
 
   const selectedDocument = useMemo(() => documents.find((document) => document.id === selectedId) ?? null, [documents, selectedId]);
   const filterLabel = FILTERS.find((item) => item.key === filter)?.label ?? 'Inbox';
@@ -123,6 +139,15 @@ function App() {
     setStatus(`${nextDocuments.length} 篇本地内容 · 离线可读`);
     setListLoading(false);
   }, [filter, query, sort]);
+
+  useEffect(() => {
+    const syncStatus = syncJob?.status;
+    if (!syncStatus) return;
+    if (lastSyncedStatus.current === syncStatus) return;
+    lastSyncedStatus.current = syncStatus;
+    if (!['completed', 'stopped', 'cancelled', 'failed'].includes(syncStatus)) return;
+    void loadList();
+  }, [loadList, syncJob?.status]);
 
   useEffect(() => {
     let active = true;
@@ -284,7 +309,21 @@ function App() {
                 setCapturing(true); setStatus('正在低频读取收藏夹样本…');
                 void window.desktop.captureZhihuCollection(collectionUrl).then((result) => setStatus(result.ok ? `读取完成：${result.itemCount} 条，${result.pageCount} 页` : `读取停止：${result.failureType ?? '未知失败'}`)).catch(() => setStatus('收藏夹读取失败')).finally(() => setCapturing(false));
               }}>读取收藏夹</button></div>
-              <label>收藏夹 URL<input value={collectionUrl} onChange={(event) => setCollectionUrl(event.target.value)} /></label>
+              <label>收藏夹 / 专栏 / 赞同活动 URL<input value={collectionUrl} onChange={(event) => setCollectionUrl(event.target.value)} /></label>
+              <small>同步支持 /collection/、公开专栏和 /people/用户名/activities；抓取后的正文会进入本地阅读器。</small>
+              <button type="button" disabled={Boolean(syncActive)} onClick={() => {
+                void window.desktop.startZhihuSync(collectionUrl).then((result) => {
+                  if (result.job) { setSyncJob(result.job); setStatus('同步已开始：串行读取并保存正文'); }
+                  else setStatus(`同步未开始：${result.error ?? '未知错误'}`);
+                });
+              }}>开始增量同步</button>
+              {syncJob && <div>
+                <p>同步状态：{syncJob.status}；已完成 {syncProgress?.completed ?? 0}/{syncProgress?.total ?? 0}，失败 {syncProgress?.failed ?? 0}，剩余 {syncProgress?.remaining ?? 0}；请求 {syncJob.payload.accessLog?.length ?? 0} 次</p>
+                {syncJob.status === 'running' && <button type="button" onClick={() => void window.desktop.pauseZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>暂停</button>}
+                {syncJob.status === 'paused' && <button type="button" onClick={() => void window.desktop.resumeZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>继续</button>}
+                {syncActive && <button type="button" onClick={() => void window.desktop.cancelZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>取消同步</button>}
+                {syncFailures.length > 0 && <ul aria-label="同步失败列表">{syncFailures.map((item) => <li key={item.externalId}>{item.externalId}：{item.failureType ?? 'unknown'} <button type="button" onClick={() => void window.desktop.retryZhihuSyncItem({ jobId: syncJob.id, externalId: item.externalId }).then((result) => result.job && setSyncJob(result.job))}>重试</button></li>)}</ul>}
+              </div>}
             </div>
           </details>
           <span className="connection-dot" title="本地数据库连接正常" />

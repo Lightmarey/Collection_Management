@@ -34,10 +34,27 @@ export type DocumentListOptions = {
   offset?: number;
 };
 
+export type SyncJob = {
+  id: string;
+  taskId: string;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  payload: Record<string, unknown>;
+};
+
 export class KnowledgeDatabase {
   readonly dbPath: string;
   readonly schemaVersion: number;
   close(): void;
+  upsertCollection(input: { id?: string; source: string; externalId: string; name?: string; description?: string }): { collectionId: string; created: boolean };
+  linkCollectionDocument(collectionId: string, documentId: string, position?: number): { collectionId: string; documentId: string; position: number };
+  createSyncJob(input: { type?: string; source: string; externalId: string; url?: string | null }): SyncJob;
+  getSyncJob(jobId: string): SyncJob;
+  updateSyncJob(jobId: string, input?: { status?: string; payload?: Record<string, unknown>; payloadPatch?: Record<string, unknown>; lastError?: string | null; incrementAttempts?: boolean }): SyncJob;
+  recordSyncRequest(jobId: string, input?: { kind?: string; at?: string; delayMs?: number | null }): SyncJob;
   upsertDocument(input: DocumentInput): DocumentWriteResult;
   importDocuments(inputs: DocumentInput[]): DocumentWriteResult[];
   recordImportError(input: DocumentInput & { importError: string }): DocumentWriteResult & { importError: string };

@@ -3,15 +3,14 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import { isAllowedZhihuUrl, isLocalUiUrl, sanitizeForLog } from './security.mjs';
-import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage } from './zhihu-m0.mjs';
+import { FAILURE_TYPES } from './zhihu-m0.mjs';
+import { captureCollection, captureSource, collectionTarget, sourceTarget } from './zhihu-capture.mjs';
+import { runCollectionSync, SYNC_STATUS } from './zhihu-sync.mjs';
 import { openKnowledgeDatabase, type KnowledgeDatabase } from './database.mjs';
 import { importUrl, parseDocument, type ParsedDocument } from './document-import.mjs';
 
 const ZHIHU_PARTITION = 'persist:zhihu-m0';
 const ZHIHU_USER_DATA_DIR = 'knowledge-management';
-const ZHIHU_PAGE_SIZE = 20;
-const ZHIHU_MAX_ITEMS = 20;
-const ZHIHU_MIN_REQUEST_DELAY_MS = 1200;
 const ZHIHU_REQUEST_TIMEOUT_MS = 15000;
 const smokeMode = process.env.KNOWLEDGE_SMOKE === '1' || process.argv.includes('--smoke');
 let mainWindow: BrowserWindow | null = null;
@@ -19,6 +18,7 @@ let remoteWindow: BrowserWindow | null = null;
 let collectionCaptureInProgress = false;
 let collectionCaptureStopRequested = false;
 let knowledgeDatabase: KnowledgeDatabase | null = null;
+let activeSync: { jobId: string; state: 'running' | 'paused' | 'cancelled'; lastRequestAt: number | null } | null = null;
 
 app.setPath('userData', path.join(app.getPath('appData'), ZHIHU_USER_DATA_DIR));
 
@@ -93,31 +93,6 @@ function createRemoteWindow(url = 'https://www.zhihu.com/', visible = false) {
   return remoteWindow;
 }
 
-function collectionUrl(value: unknown) {
-  if (typeof value !== 'string') throw new Error('collection url is required');
-  const parsed = new URL(value);
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'www.zhihu.com') throw new Error('unsupported collection url');
-  const match = parsed.pathname.match(/^\/collection\/(\d+)\/?$/);
-  if (!match) throw new Error('unsupported collection url');
-  return {
-    id: match[1],
-    pageUrl: `https://www.zhihu.com/collection/${match[1]}`,
-    apiBase: `https://www.zhihu.com/api/v4/collections/${match[1]}`,
-  };
-}
-
-function isCollectionItemsUrl(value: unknown, collectionId: string) {
-  if (typeof value !== 'string') return false;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'https:'
-      && parsed.hostname === 'www.zhihu.com'
-      && parsed.pathname === `/api/v4/collections/${collectionId}/items`;
-  } catch {
-    return false;
-  }
-}
-
 type RemoteJsonResponse = {
   status: number;
   payload: unknown | null;
@@ -190,81 +165,177 @@ async function loadRemotePage(window: BrowserWindow, url: string) {
   ]);
 }
 
-function captureResult(collectionId: string, items: unknown[], pageCount: number, extra: Record<string, unknown> = {}) {
+async function captureWithRemoteSession(url: string, controls: Record<string, unknown> = {}) {
+  const target = collectionTarget(url);
+  const window = createRemoteWindow(`https://www.zhihu.com/collection/${target.id}`);
+  await loadRemotePage(window, `https://www.zhihu.com/collection/${target.id}`);
+  return captureCollection(url, {
+    fetchJson: (targetUrl: string) => fetchJsonInRemoteSession(window.webContents, targetUrl),
+    ...controls,
+  });
+}
+
+type SyncItem = {
+  externalId: string;
+  kind: string;
+  url: string | null;
+  status: string;
+  failureType?: string | null;
+  documentId?: string;
+  versionCreated?: boolean;
+};
+
+function summarizeSyncItems(items: SyncItem[]) {
   return {
-    ok: extra.failureType === undefined,
-    collectionId,
-    itemCount: items.length,
-    pageCount,
-    items: items.slice(0, ZHIHU_MAX_ITEMS),
-    ...extra,
+    total: items.length,
+    completed: items.filter((item) => item.status === 'completed').length,
+    failed: items.filter((item) => item.status === 'failed').length,
+    remaining: items.filter((item) => item.status === 'pending').length,
   };
 }
 
-function classifyHttpFailure(response: RemoteJsonResponse) {
-  return classifyFailure({ status: response.status, body: response.marker }) ?? FAILURE_TYPES.HTTP_ERROR;
+function mergeSyncItems(previous: SyncItem[], incoming: SyncItem[]) {
+  const merged = new Map(previous.map((item) => [item.externalId, item]));
+  for (const item of incoming) {
+    if (item.externalId) merged.set(item.externalId, item);
+  }
+  return [...merged.values()];
 }
 
-function responseFailure(response: RemoteJsonResponse) {
-  return response.marker === 'none' && response.status >= 200 && response.status < 300
-    ? null
-    : classifyHttpFailure(response);
+async function waitForSync(jobId: string) {
+  while (activeSync?.jobId === jobId && activeSync.state === 'paused') await new Promise((resolve) => setTimeout(resolve, 100));
+  return activeSync?.jobId === jobId && activeSync.state === 'running';
 }
 
-async function captureCollection(url: unknown) {
-  const target = collectionUrl(url);
-  if (collectionCaptureInProgress) throw new Error('collection capture already running');
+async function recordSyncRequest(jobId: string, kind: string) {
+  if (!knowledgeDatabase || activeSync?.jobId !== jobId) return;
+  const at = Date.now();
+  const delayMs = activeSync.lastRequestAt == null ? null : Math.max(0, at - activeSync.lastRequestAt);
+  activeSync.lastRequestAt = at;
+  knowledgeDatabase.recordSyncRequest(jobId, { kind, at: new Date(at).toISOString(), delayMs });
+}
+
+async function importSyncItem(jobId: string, sourceId: string, item: SyncItem, position: number, window: BrowserWindow) {
+  if (!knowledgeDatabase) return { ok: false, failureType: FAILURE_TYPES.HTTP_ERROR };
+  if (item.status !== 'ok' || !item.url) {
+    knowledgeDatabase.recordImportError({
+      source: 'zhihu',
+      externalId: item.url ?? `collection-item:${item.externalId}`,
+      url: item.url,
+      body: '',
+      importError: item.failureType ?? (item.status === 'ok' ? FAILURE_TYPES.UNAVAILABLE : item.status),
+      fetchedAt: new Date().toISOString(),
+    });
+    return { ok: false, failureType: item.failureType ?? (item.status === 'ok' ? FAILURE_TYPES.UNAVAILABLE : item.status) };
+  }
+
+  const result = await importUrl(item.url, {
+    fetchHtml: async (targetUrl) => {
+      if (!(await waitForSync(jobId))) return { status: 499, body: '', fetchedAt: new Date().toISOString() };
+      await recordSyncRequest(jobId, 'document');
+      return fetchHtmlInRemoteSession(window.webContents, targetUrl);
+    },
+  });
+  if (result.ok && result.document) {
+    const write = knowledgeDatabase.upsertDocument(result.document);
+    knowledgeDatabase.linkCollectionDocument(sourceId, write.documentId, position);
+    return { ok: true, documentId: write.documentId, versionCreated: write.versionCreated };
+  }
+
+  if (result.source && result.externalId) {
+    knowledgeDatabase.recordImportError({
+      source: result.source,
+      externalId: result.externalId,
+      url: result.url ?? item.url,
+      body: '',
+      importError: result.status,
+      fetchedAt: new Date().toISOString(),
+    });
+  }
+  return { ok: false, failureType: result.status };
+}
+
+async function executeSyncJob(jobId: string, sourceUrl: string, retryExternalId: string | null = null) {
+  if (!knowledgeDatabase || activeSync) return;
+  const job = knowledgeDatabase.getSyncJob(jobId);
+  const target = sourceTarget(sourceUrl || String((job.payload.source as { url?: string } | undefined)?.url ?? ''));
+  const source = knowledgeDatabase.upsertCollection({
+    source: target.source,
+    externalId: target.id,
+    name: target.kind === 'collection' ? `知乎收藏夹 ${target.id}` : target.kind === 'column' ? `知乎专栏 ${target.id}` : `知乎赞同 ${target.id}`,
+  });
+  const retryItem = retryExternalId
+    ? (job.payload.items as SyncItem[] | undefined)?.find((item) => item.externalId === retryExternalId)
+    : null;
+  if (retryExternalId && !retryItem) throw new Error('sync item not found');
+
+  activeSync = { jobId, state: 'running', lastRequestAt: null };
   collectionCaptureInProgress = true;
   collectionCaptureStopRequested = false;
-
   try {
-    const window = createRemoteWindow(target.pageUrl);
-    await loadRemotePage(window, target.pageUrl);
-
-    const metadata = await fetchJsonInRemoteSession(window.webContents, target.apiBase);
-    const metadataFailure = responseFailure(metadata);
-    if (metadataFailure) {
-      return captureResult(target.id, [], 0, { failureType: metadataFailure });
-    }
-    if (collectionCaptureStopRequested) return captureResult(target.id, [], 0, { failureType: FAILURE_TYPES.STOPPED });
-
-    const items: unknown[] = [];
-    let nextUrl = `${target.apiBase}/items?offset=0&limit=${ZHIHU_PAGE_SIZE}`;
-    let pageCount = 0;
-    let nextPageAvailable = false;
-
-    while (nextUrl && items.length < ZHIHU_MAX_ITEMS) {
-      if (collectionCaptureStopRequested) return captureResult(target.id, items, pageCount, { nextPageAvailable, failureType: FAILURE_TYPES.STOPPED });
-      if (pageCount > 0) await new Promise((resolve) => setTimeout(resolve, ZHIHU_MIN_REQUEST_DELAY_MS));
-      const response = await fetchJsonInRemoteSession(window.webContents, nextUrl);
-      pageCount += 1;
-      const pageFailure = responseFailure(response);
-      if (pageFailure) {
-        return captureResult(target.id, items, pageCount, {
-          nextPageAvailable,
-          failureType: pageFailure,
+    knowledgeDatabase.updateSyncJob(jobId, { status: 'running', lastError: null, incrementAttempts: true });
+    const remote = createRemoteWindow(target.pageUrl);
+    await loadRemotePage(remote, target.pageUrl);
+    const controls = {
+      waitUntilReady: () => waitForSync(jobId),
+      isStopped: () => activeSync?.state === 'cancelled',
+      onRequest: ({ kind }: { kind: string }) => recordSyncRequest(jobId, kind),
+    };
+    const result = await runCollectionSync({
+      capture: retryItem
+        ? async () => ({ ok: true, sourceType: target.kind, sourceId: target.id, itemCount: 1, pageCount: 0, items: [retryItem] })
+        : (hooks) => (target.kind === 'collection' ? captureCollection : captureSource)(sourceUrl, {
+          fetchJson: (targetUrl: string) => fetchJsonInRemoteSession(remote.webContents, targetUrl),
+          ...hooks,
+        }),
+      fetchDocument: (rawItem, position: number) => importSyncItem(jobId, source.collectionId, rawItem as unknown as SyncItem, position, remote),
+      controls,
+      onProgress: ({ items, progress, phase, currentExternalId }) => {
+        const current = knowledgeDatabase?.getSyncJob(jobId);
+        const merged = mergeSyncItems((current?.payload.items as SyncItem[] | undefined) ?? [], items as SyncItem[]);
+        knowledgeDatabase?.updateSyncJob(jobId, {
+          payloadPatch: {
+            items: merged,
+            progress: summarizeSyncItems(merged),
+            phase,
+            currentExternalId: currentExternalId ?? null,
+          },
         });
-      }
+      },
+    });
+    const current = knowledgeDatabase.getSyncJob(jobId);
+    const merged = mergeSyncItems((current.payload.items as SyncItem[] | undefined) ?? [], result.items as SyncItem[]);
+    const finalStatus = result.status === SYNC_STATUS.COMPLETED
+      ? SYNC_STATUS.COMPLETED
+      : result.status === SYNC_STATUS.CANCELLED ? SYNC_STATUS.CANCELLED : SYNC_STATUS.STOPPED;
+    knowledgeDatabase.updateSyncJob(jobId, {
+      status: finalStatus,
+      lastError: result.failureType ?? null,
+      payloadPatch: {
+        items: merged,
+        progress: summarizeSyncItems(merged),
+        phase: 'finished',
+        failureType: result.failureType ?? null,
+        currentExternalId: null,
+      },
+    });
+  } catch (error) {
+    log('zhihu-sync-failed', { code: error instanceof Error && 'code' in error ? error.code : 'SYNC_FAILED' });
+    knowledgeDatabase.updateSyncJob(jobId, { status: 'failed', lastError: 'sync_failed', payloadPatch: { phase: 'finished', failureType: FAILURE_TYPES.HTTP_ERROR } });
+  } finally {
+    collectionCaptureInProgress = false;
+    collectionCaptureStopRequested = false;
+    if (activeSync?.jobId === jobId) activeSync = null;
+  }
+}
 
-      const normalized = normalizeCollectionPage(response.payload);
-      if (normalized.status !== 'ok') {
-        return captureResult(target.id, items, pageCount, { nextPageAvailable, failureType: normalized.status });
-      }
-      items.push(...normalized.items.slice(0, ZHIHU_MAX_ITEMS - items.length));
-
-      const paging = (response.payload as { paging?: { is_end?: unknown; next?: unknown } } | null)?.paging;
-      nextPageAvailable = normalized.nextPage;
-      const candidate = paging?.next;
-      if (!normalized.nextPage) break;
-      if (!isCollectionItemsUrl(candidate, target.id) || candidate === nextUrl) {
-        return captureResult(target.id, items, pageCount, { nextPageAvailable: true, failureType: FAILURE_TYPES.STRUCTURE_CHANGED });
-      }
-      nextUrl = candidate as string;
-    }
-
-    return captureResult(target.id, items, pageCount, {
-      nextPageAvailable,
-      truncated: items.length >= ZHIHU_MAX_ITEMS && nextPageAvailable,
+async function captureSample(url: string) {
+  if (collectionCaptureInProgress || activeSync) throw new Error('collection capture already running');
+  collectionCaptureInProgress = true;
+  collectionCaptureStopRequested = false;
+  try {
+    return await captureWithRemoteSession(url, {
+      isStopped: () => collectionCaptureStopRequested,
     });
   } finally {
     collectionCaptureInProgress = false;
@@ -357,17 +428,103 @@ ipcMain.handle('zhihu:session-summary', async (event) => {
 ipcMain.handle('zhihu:capture-collection', async (event, url?: unknown) => {
   assertTrustedLocalSender(event.sender);
   try {
-    return await captureCollection(url);
+    return await captureSample(typeof url === 'string' ? url : '');
   } catch (error) {
-    log('zhihu-capture-failed', { error });
-    return captureResult('', [], 0, { failureType: FAILURE_TYPES.HTTP_ERROR });
+    log('zhihu-capture-failed', { code: error instanceof Error && 'code' in error ? error.code : 'CAPTURE_FAILED' });
+    return { ok: false, collectionId: '', itemCount: 0, pageCount: 0, items: [], failureType: FAILURE_TYPES.HTTP_ERROR };
   }
 });
 
 ipcMain.handle('zhihu:stop-capture', (event) => {
   assertTrustedLocalSender(event.sender);
+  if (activeSync) {
+    activeSync.state = 'cancelled';
+    return { ok: true };
+  }
   collectionCaptureStopRequested = true;
   return { ok: collectionCaptureInProgress };
+});
+
+ipcMain.handle('zhihu:sync-start', (event, url?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  if (activeSync || collectionCaptureInProgress) return { ok: false, error: 'sync_already_running' };
+  try {
+    const target = sourceTarget(typeof url === 'string' ? url : '');
+    const job = knowledgeDatabase.createSyncJob({ type: target.kind, source: target.source, externalId: target.id, url: target.pageUrl });
+    void executeSyncJob(job.id, target.pageUrl);
+    return { ok: true, job: knowledgeDatabase.getSyncJob(job.id) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'sync_start_failed' };
+  }
+});
+
+ipcMain.handle('zhihu:sync-status', (event, jobId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase || typeof jobId !== 'string') return { ok: false, error: 'job_not_found' };
+  try {
+    return { ok: true, job: knowledgeDatabase.getSyncJob(jobId) };
+  } catch {
+    return { ok: false, error: 'job_not_found' };
+  }
+});
+
+ipcMain.handle('zhihu:sync-pause', (event, jobId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase || typeof jobId !== 'string' || activeSync?.jobId !== jobId) return { ok: false, error: 'job_not_running' };
+  activeSync.state = 'paused';
+  return { ok: true, job: knowledgeDatabase.updateSyncJob(jobId, { status: 'paused' }) };
+});
+
+ipcMain.handle('zhihu:sync-resume', (event, jobId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase || typeof jobId !== 'string') return { ok: false, error: 'job_not_found' };
+  try {
+    const job = knowledgeDatabase.getSyncJob(jobId);
+    if (activeSync?.jobId === jobId && activeSync.state === 'paused') {
+      activeSync.state = 'running';
+      return { ok: true, job: knowledgeDatabase.updateSyncJob(jobId, { status: 'running' }) };
+    }
+    if (activeSync) return { ok: false, error: 'sync_already_running' };
+    if (job.status !== 'paused') return { ok: false, error: 'job_not_paused' };
+    const sourceUrl = String((job.payload.source as { url?: string } | undefined)?.url ?? '');
+    void executeSyncJob(jobId, sourceUrl);
+    return { ok: true, job: knowledgeDatabase.getSyncJob(jobId) };
+  } catch {
+    return { ok: false, error: 'sync_resume_failed' };
+  }
+});
+
+ipcMain.handle('zhihu:sync-cancel', (event, jobId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase || typeof jobId !== 'string') return { ok: false, error: 'job_not_found' };
+  try {
+    if (activeSync?.jobId === jobId) {
+      activeSync.state = 'cancelled';
+      return { ok: true, job: knowledgeDatabase.getSyncJob(jobId) };
+    }
+    return { ok: true, job: knowledgeDatabase.updateSyncJob(jobId, { status: 'cancelled', lastError: FAILURE_TYPES.STOPPED }) };
+  } catch {
+    return { ok: false, error: 'job_not_found' };
+  }
+});
+
+ipcMain.handle('zhihu:sync-retry-item', (event, input?: { jobId?: unknown; externalId?: unknown }) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase || typeof input?.jobId !== 'string' || typeof input.externalId !== 'string' || activeSync) return { ok: false, error: 'retry_unavailable' };
+  try {
+    const job = knowledgeDatabase.getSyncJob(input.jobId);
+    const items = (job.payload.items as SyncItem[] | undefined) ?? [];
+    const item = items.find((candidate) => candidate.externalId === input.externalId);
+    if (!item || item.status !== 'failed') return { ok: false, error: 'item_not_failed' };
+    const pending = items.map((candidate) => candidate.externalId === item.externalId ? { ...candidate, status: 'pending', failureType: null } : candidate);
+    const queued = knowledgeDatabase.updateSyncJob(input.jobId, { status: 'queued', lastError: null, payloadPatch: { items: pending, progress: summarizeSyncItems(pending), failureType: null } });
+    const sourceUrl = String((job.payload.source as { url?: string } | undefined)?.url ?? '');
+    void executeSyncJob(input.jobId, sourceUrl, item.externalId);
+    return { ok: true, job: queued };
+  } catch {
+    return { ok: false, error: 'retry_failed' };
+  }
 });
 
 ipcMain.handle('document:import-file', (event, input?: { name?: unknown; kind?: unknown; content?: unknown }) => {
