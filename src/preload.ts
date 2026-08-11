@@ -37,5 +37,9 @@ contextBridge.exposeInMainWorld('desktop', {
   stopZhihuCapture: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('zhihu:stop-capture'),
   importDocumentFile: (input: { name: string; kind: 'markdown' | 'html'; content: string }): Promise<DocumentImportResult> => ipcRenderer.invoke('document:import-file', input),
   importDocumentUrl: (url: string): Promise<DocumentImportResult> => ipcRenderer.invoke('document:import-url', url),
+  readerBootstrap: (options: ReaderListOptions = {}): Promise<ReaderBootstrapResult> => ipcRenderer.invoke('reader:bootstrap', options),
+  getReaderDocument: (documentId: string): Promise<{ ok: boolean; error?: string; document?: ReaderDocument }> => ipcRenderer.invoke('reader:get-document', documentId),
+  saveReadingState: (input: { documentId: string; status?: string; favorite?: boolean; knowledgeLevel?: string; scrollTop?: number }): Promise<{ ok: boolean; error?: string; state?: { documentId: string; status: string; favorite: boolean; knowledgeLevel: string; scrollTop: number } }> => ipcRenderer.invoke('reader:save-state', input),
+  saveReaderSession: (selectedDocumentId: string | null): Promise<{ ok: boolean; error?: string; session?: { selectedDocumentId: string | null; updatedAt: string } }> => ipcRenderer.invoke('reader:save-session', selectedDocumentId),
   smokeReady: (): Promise<boolean> => ipcRenderer.invoke('app:smoke-ready'),
 });

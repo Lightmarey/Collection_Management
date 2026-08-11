@@ -398,6 +398,57 @@ ipcMain.handle('document:import-url', async (event, url?: unknown) => {
   }
 });
 
+function readerDatabaseError(operation: string, error: unknown) {
+  log(operation, { code: error instanceof Error && 'code' in error ? error.code : 'DATABASE_ERROR' });
+  return { ok: false, error: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'database_error' };
+}
+
+ipcMain.handle('reader:bootstrap', (event, options?: ReaderListOptions) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try {
+    return {
+      ok: true,
+      documents: knowledgeDatabase.listDocuments(options ?? {}),
+      tags: knowledgeDatabase.listTags(),
+      session: knowledgeDatabase.getReaderSession(),
+    };
+  } catch (error) {
+    return readerDatabaseError('reader-bootstrap-failed', error);
+  }
+});
+
+ipcMain.handle('reader:get-document', (event, documentId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try {
+    const document = knowledgeDatabase.getDocument(typeof documentId === 'string' ? documentId : '');
+    return document ? { ok: true, document } : { ok: false, error: 'document_not_found' };
+  } catch (error) {
+    return readerDatabaseError('reader-document-failed', error);
+  }
+});
+
+ipcMain.handle('reader:save-state', (event, input?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try {
+    return { ok: true, state: knowledgeDatabase.saveReadingState(input && typeof input === 'object' ? input as { documentId: string; status?: string; favorite?: boolean; knowledgeLevel?: string; scrollTop?: number } : { documentId: '' }) };
+  } catch (error) {
+    return readerDatabaseError('reader-state-save-failed', error);
+  }
+});
+
+ipcMain.handle('reader:save-session', (event, selectedDocumentId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try {
+    return { ok: true, session: knowledgeDatabase.saveReaderSession(typeof selectedDocumentId === 'string' ? selectedDocumentId : null) };
+  } catch (error) {
+    return readerDatabaseError('reader-session-save-failed', error);
+  }
+});
+
 ipcMain.handle('app:smoke-ready', (event) => {
   assertTrustedLocalSender(event.sender);
   if (!smokeMode) return false;

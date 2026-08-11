@@ -26,6 +26,14 @@ export type DocumentWriteResult = {
   versionCreated: boolean;
 };
 
+export type DocumentListOptions = {
+  filter?: string;
+  query?: string;
+  sort?: 'updated' | 'title' | 'duration' | 'status';
+  limit?: number;
+  offset?: number;
+};
+
 export class KnowledgeDatabase {
   readonly dbPath: string;
   readonly schemaVersion: number;
@@ -36,6 +44,12 @@ export class KnowledgeDatabase {
   addHighlight(input: { documentId: string; documentVersionId?: string | null; quote: string; startOffset?: number | null; endOffset?: number | null; color?: string }): Record<string, unknown>;
   addNote(input: { documentId: string; documentVersionId?: string | null; body: string }): Record<string, unknown>;
   addTag(documentId: string, name: string): Record<string, unknown>;
+  listTags(): Array<Record<string, unknown>>;
+  listDocuments(options?: DocumentListOptions): Array<Record<string, unknown>>;
+  getDocument(documentId: string): Record<string, unknown> | null;
+  getReaderSession(): Record<string, unknown>;
+  saveReaderSession(selectedDocumentId?: string | null): Record<string, unknown>;
+  saveReadingState(input: { documentId: string; status?: string; favorite?: boolean; knowledgeLevel?: string; scrollTop?: number }): Record<string, unknown>;
   search(query: string, limit?: number): Array<Record<string, unknown>>;
   exportJson(): Record<string, unknown>;
   exportJsonBackup(filePath: string): Record<string, unknown>;

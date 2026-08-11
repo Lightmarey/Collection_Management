@@ -19,7 +19,7 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   const directory = tempDirectory();
   const databasePath = path.join(directory, 'knowledge.sqlite');
   const database = openKnowledgeDatabase(databasePath);
-  assert.equal(database.schemaVersion, 2);
+  assert.equal(database.schemaVersion, 3);
   const backup = database.exportJson();
   assert.deepEqual(database.checkJsonBackup(backup).valid, true);
   database.close();
@@ -33,10 +33,10 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   assert.equal(raw.pragma('journal_mode', { simple: true }), 'wal');
   assert.throws(() => migrateDatabase(raw, [
     { version: 1, up() {} },
-    { version: 3, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
+    { version: 4, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
   ]), /数据库迁移失败/);
   assert.equal(raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'transient_migration_table'").get(), undefined);
-  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 2);
+  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 3);
   raw.close();
   closeAndRemove(directory);
 });
@@ -62,13 +62,22 @@ test('imports 5000 documents, searches FTS, versions content, and restores JSON 
   const updated = database.upsertDocument({ ...documents[4242], body: 'alpha searchable body changed' });
   assert.equal(updated.versionCreated, true);
 
+  assert.ok(database.search('changed').some((row) => row.id === first.documentId));
+  assert.ok(database.search('important').some((row) => row.id === first.documentId));
+  assert.ok(database.search('keep').some((row) => row.id === first.documentId));
+  assert.equal(database.listDocuments({ limit: 10 }).length, 10);
+  const readingState = database.saveReadingState({ documentId: first.documentId, status: 'reading', favorite: true, knowledgeLevel: 'medium', scrollTop: 320 });
+  assert.deepEqual(readingState, { documentId: first.documentId, status: 'reading', favorite: true, knowledgeLevel: 'medium', scrollTop: 320, updatedAt: readingState.updatedAt });
+  database.saveReaderSession(first.documentId);
+  assert.equal(database.listDocuments({ filter: 'reading' }).some((row) => row.id === first.documentId), true);
+  assert.equal(database.listDocuments({ filter: 'favorites' }).some((row) => row.id === first.documentId), true);
+  assert.equal(database.getReaderSession().selectedDocumentId, first.documentId);
+  assert.equal(database.getDocument(first.documentId).bodyState, 'ok');
+
   const exported = database.exportJson();
   assert.equal(exported.tables.documents.length, 5000);
   assert.equal(exported.tables.document_versions.length, 5001);
   assert.equal(exported.tables.notes.length, 1);
-  assert.ok(database.search('changed').some((row) => row.id === first.documentId));
-  assert.ok(database.search('important').some((row) => row.id === first.documentId));
-  assert.ok(database.search('keep').some((row) => row.id === first.documentId));
 
   const restoredPath = path.join(directory, 'restored.sqlite');
   const restored = openKnowledgeDatabase(restoredPath, { startupBackup: false });
@@ -76,6 +85,8 @@ test('imports 5000 documents, searches FTS, versions content, and restores JSON 
   assert.equal(check.valid, true);
   assert.equal(restored.exportJson().tables.documents.length, 5000);
   assert.ok(restored.search('changed').some((row) => row.id === first.documentId));
+  assert.equal(restored.getReaderSession().selectedDocumentId, first.documentId);
+  assert.equal(restored.getDocument(first.documentId).scrollTop, 320);
   restored.close();
   database.close();
   closeAndRemove(directory);

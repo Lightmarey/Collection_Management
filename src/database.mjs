@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 const BACKUP_TABLES = [
   'documents',
@@ -18,6 +18,8 @@ const BACKUP_TABLES = [
   'relations',
   'tasks',
   'jobs',
+  'reading_states',
+  'reader_session',
 ];
 
 const TABLE_COLUMNS = {
@@ -33,6 +35,8 @@ const TABLE_COLUMNS = {
   relations: ['id', 'from_document_id', 'to_document_id', 'relation_type', 'created_at'],
   tasks: ['id', 'task_type', 'status', 'payload_json', 'created_at', 'updated_at'],
   jobs: ['id', 'task_id', 'status', 'attempts', 'last_error', 'created_at', 'updated_at'],
+  reading_states: ['document_id', 'status', 'favorite', 'knowledge_level', 'scroll_top', 'updated_at'],
+  reader_session: ['id', 'selected_document_id', 'updated_at'],
 };
 
 const MIGRATIONS = [
@@ -198,7 +202,34 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 3,
+    up(db) {
+      db.exec(`
+        CREATE TABLE reading_states (
+          document_id TEXT PRIMARY KEY,
+          status TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread', 'reading', 'processed', 'archived')),
+          favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+          knowledge_level TEXT NOT NULL DEFAULT '',
+          scroll_top REAL NOT NULL DEFAULT 0 CHECK (scroll_top >= 0),
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        );
+        CREATE INDEX reading_states_status_idx ON reading_states(status);
+        CREATE INDEX reading_states_level_idx ON reading_states(knowledge_level);
+        CREATE TABLE reader_session (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          selected_document_id TEXT,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (selected_document_id) REFERENCES documents(id) ON DELETE SET NULL
+        );
+      `);
+    },
+  },
 ];
+
+const READING_STATUSES = new Set(['unread', 'reading', 'processed', 'archived']);
+const KNOWLEDGE_LEVELS = new Set(['short', 'medium', 'long']);
 
 export class DatabaseError extends Error {
   constructor(message, code = 'DATABASE_ERROR', options = {}) {
@@ -223,6 +254,18 @@ function contentHash(body) {
 function nullableText(value) {
   if (value == null || value === '') return null;
   return text(value);
+}
+
+function safeJson(value, fallback = null) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function searchMatch(value) {
+  return value.split(/\s+/).map((part) => `"${part.replaceAll('"', '""')}"*`).join(' ');
 }
 
 function mediaJson(value) {
@@ -274,7 +317,9 @@ function validateBackup(backup) {
   if (schemaVersion > CURRENT_SCHEMA_VERSION) return { valid: false, reason: '备份版本高于当前数据库' };
   if (!backup.tables || typeof backup.tables !== 'object') return { valid: false, reason: '备份缺少 tables' };
   for (const table of BACKUP_TABLES) {
-    if (!Array.isArray(backup.tables[table])) return { valid: false, reason: `备份缺少表 ${table}` };
+    if (!Array.isArray(backup.tables[table]) && !(schemaVersion < 3 && ['reading_states', 'reader_session'].includes(table))) {
+      return { valid: false, reason: `备份缺少表 ${table}` };
+    }
   }
   return { valid: true };
 }
@@ -444,6 +489,170 @@ export class KnowledgeDatabase {
     }
   }
 
+  listTags() {
+    try {
+      return this.db.prepare(`
+        SELECT t.id, t.name, COUNT(dt.document_id) AS documentCount
+        FROM tags t LEFT JOIN document_tags dt ON dt.tag_id = t.id
+        GROUP BY t.id ORDER BY t.name COLLATE NOCASE ASC
+      `).all();
+    } catch (error) {
+      throw dbError('读取标签', error);
+    }
+  }
+
+  listDocuments({ filter = 'inbox', query = '', sort = 'updated', limit = 100, offset = 0 } = {}) {
+    const value = text(query).trim();
+    const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
+    const safeOffset = Math.max(0, Number(offset) || 0);
+    const conditions = [];
+    const params = [];
+    let from = 'FROM documents d JOIN document_versions v ON v.id = d.current_version_id LEFT JOIN reading_states rs ON rs.document_id = d.id';
+
+    if (value) {
+      from += ' JOIN search_index ON search_index.document_id = d.id';
+      conditions.push('search_index MATCH ?');
+      params.push(searchMatch(value));
+    }
+
+    const filterValue = text(filter).trim() || 'inbox';
+    if (filterValue === 'inbox') conditions.push("COALESCE(rs.status, 'unread') <> 'archived'");
+    else if (filterValue === 'unread') conditions.push("COALESCE(rs.status, 'unread') = 'unread'");
+    else if (filterValue === 'reading') conditions.push("COALESCE(rs.status, 'unread') = 'reading'");
+    else if (filterValue === 'processed') conditions.push("COALESCE(rs.status, 'unread') = 'processed'");
+    else if (filterValue === 'archived') conditions.push("COALESCE(rs.status, 'unread') = 'archived'");
+    else if (filterValue === 'favorites') conditions.push('COALESCE(rs.favorite, 0) = 1');
+    else if (filterValue.startsWith('tag:')) {
+      conditions.push('EXISTS (SELECT 1 FROM document_tags selected_dt WHERE selected_dt.document_id = d.id AND selected_dt.tag_id = ?)');
+      params.push(filterValue.slice(4));
+    } else if (filterValue.startsWith('level:') && KNOWLEDGE_LEVELS.has(filterValue.slice(6))) {
+      conditions.push('COALESCE(rs.knowledge_level, \'\') = ?');
+      params.push(filterValue.slice(6));
+    }
+
+    const orderBy = {
+      title: 'd.title COLLATE NOCASE ASC, d.updated_at DESC',
+      duration: 'length(COALESCE(v.body, \'\')) ASC, d.updated_at DESC',
+      status: "CASE COALESCE(rs.status, 'unread') WHEN 'unread' THEN 0 WHEN 'reading' THEN 1 WHEN 'processed' THEN 2 ELSE 3 END, d.updated_at DESC",
+      updated: 'd.updated_at DESC, d.id ASC',
+    }[sort] || 'd.updated_at DESC, d.id ASC';
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    try {
+      const rows = this.db.prepare(`
+        SELECT d.id, d.source, d.external_id AS externalId, d.title, d.author, d.url,
+          d.fetched_at AS fetchedAt, d.import_error AS importError,
+          COALESCE(rs.status, 'unread') AS status, COALESCE(rs.favorite, 0) AS favorite,
+          COALESCE(rs.knowledge_level, '') AS knowledgeLevel,
+          CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 0 ELSE 1 END AS hasBody,
+          CAST(CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 1 ELSE (length(v.body) + 1199) / 1200 END AS INTEGER) AS estimatedMinutes
+        ${from} ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?
+      `).all(...params, safeLimit, safeOffset);
+      return rows.map((row) => ({ ...row, favorite: Boolean(row.favorite), hasBody: Boolean(row.hasBody) }));
+    } catch (error) {
+      throw dbError('读取文档列表', error);
+    }
+  }
+
+  getDocument(documentId) {
+    const id = text(documentId).trim();
+    if (!id) return null;
+    try {
+      const row = this.db.prepare(`
+        SELECT d.id, d.source, d.external_id AS externalId, d.title, d.author, d.url,
+          d.published_at AS publishedAt, d.fetched_at AS fetchedAt, d.import_error AS importError,
+          v.id AS versionId, v.version_number AS versionNumber, v.body,
+          COALESCE(rs.status, 'unread') AS status, COALESCE(rs.favorite, 0) AS favorite,
+          COALESCE(rs.knowledge_level, '') AS knowledgeLevel, COALESCE(rs.scroll_top, 0) AS scrollTop,
+          CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 0 ELSE 1 END AS hasBody,
+          CAST(CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 1 ELSE (length(v.body) + 1199) / 1200 END AS INTEGER) AS estimatedMinutes
+        FROM documents d JOIN document_versions v ON v.id = d.current_version_id
+        LEFT JOIN reading_states rs ON rs.document_id = d.id WHERE d.id = ?
+      `).get(id);
+      if (!row) return null;
+      const body = typeof row.body === 'string' ? row.body : '';
+      const highlights = this.db.prepare(`
+        SELECT id, quote, start_offset AS startOffset, end_offset AS endOffset, color, created_at AS createdAt
+        FROM highlights WHERE document_id = ? ORDER BY created_at ASC
+      `).all(id);
+      const notes = this.db.prepare(`
+        SELECT id, body, created_at AS createdAt, updated_at AS updatedAt
+        FROM notes WHERE document_id = ? ORDER BY created_at ASC
+      `).all(id);
+      const processingResults = this.db.prepare(`
+        SELECT id, kind, status, payload_json AS payloadJson, created_at AS createdAt
+        FROM processing_results WHERE document_id = ? ORDER BY created_at DESC
+      `).all(id).map((result) => ({ ...result, payload: safeJson(result.payloadJson, result.payloadJson) }));
+      const tags = this.db.prepare(`
+        SELECT t.id, t.name FROM tags t JOIN document_tags dt ON dt.tag_id = t.id
+        WHERE dt.document_id = ? ORDER BY t.name COLLATE NOCASE ASC
+      `).all(id);
+      return {
+        ...row,
+        body,
+        bodyState: body.includes('\u0000') ? 'corrupt' : body.trim() ? 'ok' : 'empty',
+        hasBody: Boolean(row.hasBody),
+        favorite: Boolean(row.favorite),
+        highlights,
+        notes,
+        tags,
+        processingResults,
+      };
+    } catch (error) {
+      throw dbError('读取文档正文', error);
+    }
+  }
+
+  getReaderSession() {
+    try {
+      return this.db.prepare('SELECT selected_document_id AS selectedDocumentId, updated_at AS updatedAt FROM reader_session WHERE id = 1').get() ?? { selectedDocumentId: null, updatedAt: null };
+    } catch (error) {
+      throw dbError('读取阅读进度', error);
+    }
+  }
+
+  saveReaderSession(selectedDocumentId = null) {
+    const id = selectedDocumentId == null ? null : text(selectedDocumentId).trim();
+    try {
+      if (id && !this.db.prepare('SELECT 1 FROM documents WHERE id = ?').get(id)) throw new DatabaseError('文档不存在', 'DOCUMENT_NOT_FOUND');
+      const updatedAt = now();
+      this.db.prepare(`
+        INSERT INTO reader_session (id, selected_document_id, updated_at) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET selected_document_id = excluded.selected_document_id, updated_at = excluded.updated_at
+      `).run(id, updatedAt);
+      return { selectedDocumentId: id, updatedAt };
+    } catch (error) {
+      throw dbError('保存当前文档', error);
+    }
+  }
+
+  saveReadingState(input = {}) {
+    const documentId = text(input.documentId).trim();
+    if (!documentId) throw new DatabaseError('阅读状态缺少文档', 'VALIDATION_ERROR');
+    try {
+      return this.db.transaction(() => {
+        if (!this.db.prepare('SELECT 1 FROM documents WHERE id = ?').get(documentId)) throw new DatabaseError('文档不存在', 'DOCUMENT_NOT_FOUND');
+        const existing = this.db.prepare('SELECT * FROM reading_states WHERE document_id = ?').get(documentId);
+        const status = input.status == null ? existing?.status ?? 'unread' : text(input.status).trim();
+        const knowledgeLevel = input.knowledgeLevel == null ? existing?.knowledge_level ?? '' : text(input.knowledgeLevel).trim();
+        const favorite = input.favorite == null ? Number(existing?.favorite ?? 0) : input.favorite ? 1 : 0;
+        const scrollTop = input.scrollTop == null ? Number(existing?.scroll_top ?? 0) : Number(input.scrollTop);
+        if (!READING_STATUSES.has(status)) throw new DatabaseError('阅读状态无效', 'VALIDATION_ERROR');
+        if (knowledgeLevel && !KNOWLEDGE_LEVELS.has(knowledgeLevel)) throw new DatabaseError('知识层级无效', 'VALIDATION_ERROR');
+        if (!Number.isFinite(scrollTop) || scrollTop < 0) throw new DatabaseError('阅读位置无效', 'VALIDATION_ERROR');
+        const updatedAt = now();
+        this.db.prepare(`
+          INSERT INTO reading_states (document_id, status, favorite, knowledge_level, scroll_top, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(document_id) DO UPDATE SET status = excluded.status, favorite = excluded.favorite,
+            knowledge_level = excluded.knowledge_level, scroll_top = excluded.scroll_top, updated_at = excluded.updated_at
+        `).run(documentId, status, favorite, knowledgeLevel, scrollTop, updatedAt);
+        return { documentId, status, favorite: Boolean(favorite), knowledgeLevel, scrollTop, updatedAt };
+      })();
+    } catch (error) {
+      throw dbError('保存阅读状态', error);
+    }
+  }
+
   _refreshSearchIndex(documentId) {
     const row = this.db.prepare(`
       SELECT d.id, d.title, d.author, v.body,
@@ -463,7 +672,7 @@ export class KnowledgeDatabase {
     const value = text(query).trim();
     if (!value) return [];
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
-    const match = value.split(/\s+/).map((part) => `"${part.replaceAll('"', '""')}"*`).join(' ');
+    const match = searchMatch(value);
     try {
       return this.db.prepare(`
         SELECT si.document_id AS id, d.source, d.external_id AS externalId, si.title, si.author, si.body,
@@ -501,7 +710,7 @@ export class KnowledgeDatabase {
   checkJsonBackup(backup) {
     const validation = validateBackup(backup);
     if (!validation.valid) return validation;
-    return { valid: true, schemaVersion: Number(backup.schemaVersion), counts: Object.fromEntries(BACKUP_TABLES.map((table) => [table, backup.tables[table].length])) };
+    return { valid: true, schemaVersion: Number(backup.schemaVersion), counts: Object.fromEntries(BACKUP_TABLES.map((table) => [table, (backup.tables[table] ?? []).length])) };
   }
 
   restoreJsonBackup(backup) {
@@ -509,13 +718,13 @@ export class KnowledgeDatabase {
     if (!validation.valid) throw new DatabaseError(`无法恢复备份：${validation.reason}`, 'BACKUP_INVALID');
     try {
       this.db.transaction(() => {
-        this.db.exec('DELETE FROM search_index; DELETE FROM jobs; DELETE FROM tasks; DELETE FROM relations; DELETE FROM processing_results; DELETE FROM document_tags; DELETE FROM tags; DELETE FROM notes; DELETE FROM highlights; DELETE FROM collection_items; DELETE FROM collections; DELETE FROM document_versions; DELETE FROM documents;');
+        this.db.exec('DELETE FROM search_index; DELETE FROM reader_session; DELETE FROM reading_states; DELETE FROM jobs; DELETE FROM tasks; DELETE FROM relations; DELETE FROM processing_results; DELETE FROM document_tags; DELETE FROM tags; DELETE FROM notes; DELETE FROM highlights; DELETE FROM collection_items; DELETE FROM collections; DELETE FROM document_versions; DELETE FROM documents;');
         const documentRows = backup.tables.documents.map((row) => ({ ...row, current_version_id: null }));
         this._insertRows('documents', documentRows);
         this._insertRows('document_versions', backup.tables.document_versions);
         const updateDocument = this.db.prepare('UPDATE documents SET current_version_id = ? WHERE id = ?');
         for (const row of backup.tables.documents) updateDocument.run(row.current_version_id || null, row.id);
-        for (const table of ['collections', 'collection_items', 'highlights', 'notes', 'tags', 'document_tags', 'processing_results', 'relations', 'tasks', 'jobs']) this._insertRows(table, backup.tables[table]);
+        for (const table of ['collections', 'collection_items', 'highlights', 'notes', 'tags', 'document_tags', 'processing_results', 'relations', 'tasks', 'jobs', 'reading_states', 'reader_session']) this._insertRows(table, backup.tables[table] ?? []);
         for (const row of backup.tables.documents) this._refreshSearchIndex(row.id);
       })();
       return this.checkJsonBackup(this.exportJson());
