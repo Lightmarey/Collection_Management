@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage, redact, safeLogEvent } from "../src/zhihu-m0.mjs";
-import { captureCollection } from "../src/zhihu-capture.mjs";
+import { captureCollection, captureSource, sourceTarget } from "../src/zhihu-capture.mjs";
 
 const fixture = JSON.parse(await readFile(new URL("../fixtures/zhihu/collection-page.sample.json", import.meta.url)));
 
@@ -78,6 +78,47 @@ test("runs the capture flow headlessly and stops at twenty items", async () => {
   assert.equal(result.truncated, true);
   assert.equal(calls.length, 2);
   assert.ok(!JSON.stringify(result).includes("SAMPLE"));
+});
+
+test("supports public column pagination through the existing source boundary", async () => {
+  const target = sourceTarget("https://zhuanlan.zhihu.com/crossin");
+  assert.equal(target.kind, "column");
+  assert.equal(target.itemsUrl, "https://www.zhihu.com/api/v4/columns/crossin/items");
+  const result = await captureSource("https://zhuanlan.zhihu.com/crossin", {
+    fetchJson: async () => ({
+      status: 200,
+      marker: "none",
+      payload: {
+        data: [{ id: "article-1", type: "article", url: "https://zhuanlan.zhihu.com/p/1", title: "[TITLE]", excerpt: "[BODY]" }],
+        paging: { is_end: true },
+      },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceType, "column");
+  assert.equal(result.items[0].externalId, "article-1");
+  assert.equal(result.items[0].contentHash?.length, 64);
+  assert.ok(!JSON.stringify(result).includes("[BODY]"));
+});
+
+test("collects only explicit vote or like activities", async () => {
+  const result = await captureSource("https://www.zhihu.com/people/demo/activities", {
+    fetchJson: async () => ({
+      status: 200,
+      marker: "none",
+      payload: {
+        data: [
+          { verb: "voteup", target: { id: "answer-1", type: "answer", url: "https://www.zhihu.com/question/1/answer/2", title: "[TITLE]", excerpt: "[BODY]" } },
+          { verb: "follow", target: { id: "answer-2", type: "answer", url: "https://www.zhihu.com/question/2/answer/3" } },
+        ],
+        paging: { is_end: true },
+      },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceType, "likes");
+  assert.deepEqual(result.items.map((item) => item.externalId), ["answer-1"]);
+  assert.ok(!JSON.stringify(result).includes("[BODY]"));
 });
 
 test("redacts credentials, bodies, and query secrets recursively", () => {

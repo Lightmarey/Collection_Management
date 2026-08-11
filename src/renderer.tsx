@@ -8,6 +8,21 @@ function App() {
   const [documentUrl, setDocumentUrl] = useState('https://www.zhihu.com/');
   const [capturing, setCapturing] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [syncJob, setSyncJob] = useState<Awaited<ReturnType<typeof window.desktop.startZhihuSync>>['job']>();
+
+  useEffect(() => {
+    if (!syncJob?.id) return undefined;
+    const timer = window.setInterval(() => {
+      void window.desktop.getZhihuSyncStatus(syncJob.id).then((result) => {
+        if (result.job) setSyncJob(result.job);
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [syncJob?.id]);
+
+  const syncActive = syncJob && ['queued', 'running', 'paused'].includes(syncJob.status);
+  const syncProgress = syncJob?.payload.progress;
+  const syncFailures = syncJob?.payload.items?.filter((item) => item.status === 'failed') ?? [];
 
   function showImportResult(result: { ok: boolean; status: string; versionCreated?: boolean; error?: string }) {
     setStatus(result.ok ? `导入完成：${result.versionCreated ? '已写入新版本' : '内容未变化，已幂等复用'}` : `导入未完成：${result.status}${result.error ? `（${result.error}）` : ''}`);
@@ -57,7 +72,7 @@ function App() {
         检查隔离 session
       </button>
       <label>
-        收藏夹 URL
+        收藏夹 / 专栏 / 赞同活动 URL
         <input value={collectionUrl} onChange={(event) => setCollectionUrl(event.target.value)} />
       </label>
       <button type="button" disabled={capturing} onClick={() => {
@@ -75,6 +90,32 @@ function App() {
       {capturing && <button type="button" onClick={() => void window.desktop.stopZhihuCapture().then(() => setStatus('已请求停止，将在当前请求完成后停止'))}>
         停止读取
       </button>}
+      <h2>知乎来源增量同步</h2>
+      <small>支持收藏夹（/collection/）、公开专栏（zhuanlan.zhihu.com/专栏名）和赞同活动（/people/用户名/activities）。</small>
+      <button type="button" disabled={Boolean(syncActive)} onClick={() => {
+        void window.desktop.startZhihuSync(collectionUrl).then((result) => {
+          if (result.job) {
+            setSyncJob(result.job);
+            setStatus('同步已开始：串行读取并保存正文');
+          } else setStatus(`同步未开始：${result.error ?? '未知错误'}`);
+        });
+      }}>
+        开始增量同步
+      </button>
+      {syncJob && <>
+        <p>
+          同步状态：{syncJob.status}；已完成 {syncProgress?.completed ?? 0}/{syncProgress?.total ?? 0}，失败 {syncProgress?.failed ?? 0}，剩余 {syncProgress?.remaining ?? 0}；请求 {syncJob.payload.accessLog?.length ?? 0} 次
+        </p>
+        {syncJob.status === 'running' && <button type="button" onClick={() => void window.desktop.pauseZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>暂停</button>}
+        {syncJob.status === 'paused' && <button type="button" onClick={() => void window.desktop.resumeZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>继续</button>}
+        {syncActive && <button type="button" onClick={() => void window.desktop.cancelZhihuSync(syncJob.id).then((result) => result.job && setSyncJob(result.job))}>取消同步</button>}
+        {syncFailures.length > 0 && <ul aria-label="同步失败列表">
+          {syncFailures.map((item) => <li key={item.externalId}>
+            {item.externalId}：{item.failureType ?? 'unknown'}
+            <button type="button" onClick={() => void window.desktop.retryZhihuSyncItem({ jobId: syncJob.id, externalId: item.externalId }).then((result) => result.job && setSyncJob(result.job))}>重试</button>
+          </li>)}
+        </ul>}
+      </>}
       <small>使用隔离 persist:zhihu-m0 session 在后台读取；不会打开知乎窗口，也不会向 UI 暴露 Cookie、Token 或原始 ipcRenderer。</small>
     </main>
   );

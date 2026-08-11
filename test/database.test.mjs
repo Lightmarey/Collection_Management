@@ -80,3 +80,25 @@ test('imports 5000 documents, searches FTS, versions content, and restores JSON 
   database.close();
   closeAndRemove(directory);
 });
+
+test('persists source-specific sync jobs, progress, and request pacing', () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, 'knowledge.sqlite'));
+  const source = database.upsertCollection({ source: 'zhihu:column', externalId: 'crossin', name: '知乎专栏 crossin' });
+  const job = database.createSyncJob({ type: 'column', source: 'zhihu:column', externalId: 'crossin', url: 'https://zhuanlan.zhihu.com/crossin' });
+  assert.equal(job.status, 'queued');
+  assert.equal(job.payload.source.type, 'column');
+  database.recordSyncRequest(job.id, { kind: 'items', at: '2026-08-11T00:00:00.000Z', delayMs: null });
+  const updated = database.updateSyncJob(job.id, {
+    status: 'completed',
+    payloadPatch: { progress: { total: 1, completed: 1, failed: 0, remaining: 0 } },
+    incrementAttempts: true,
+  });
+  assert.equal(updated.status, 'completed');
+  assert.equal(updated.attempts, 1);
+  assert.equal(updated.payload.progress.completed, 1);
+  assert.equal(updated.payload.accessLog.length, 1);
+  assert.equal(source.created, true);
+  database.close();
+  closeAndRemove(directory);
+});
