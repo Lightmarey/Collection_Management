@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   build: {
     rollupOptions: {
-      external: ['jsdom'],
+      external: ['jsdom', 'better-sqlite3'],
     },
   },
 });
