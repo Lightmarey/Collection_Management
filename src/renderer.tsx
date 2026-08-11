@@ -39,6 +39,9 @@ function errorLabel(error: string | undefined) {
     database_unavailable: '本地数据库不可用，请检查磁盘权限后重启。',
     database_read_failed: '读取本地数据失败。',
     document_not_found: '文档已不存在或已被删除。',
+    ANCHOR_NOT_FOUND: '引文已不在当前正文中，请重新选择正文位置。',
+    ANNOTATION_NOT_FOUND: '标注已不存在。',
+    VALIDATION_ERROR: '标注内容不能为空。',
     corrupt: '正文数据损坏，无法安全显示。',
   }[error ?? ''] ?? '本地阅读数据暂时不可用。';
 }
@@ -50,6 +53,24 @@ function safeReaderHtml(body: string) {
   });
 }
 
+type SelectionAnchor = { exact: string; prefix: string; suffix: string; start: number; end: number };
+
+function selectedTextAnchor(root: HTMLElement): SelectionAnchor | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const startRange = document.createRange();
+  startRange.selectNodeContents(root);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const start = startRange.toString().length;
+  const exact = range.toString();
+  const end = start + exact.length;
+  if (!exact.trim()) return null;
+  const content = root.textContent ?? '';
+  return { exact, start, end, prefix: content.slice(Math.max(0, start - 32), start), suffix: content.slice(end, end + 32) };
+}
+
 function App() {
   const [filter, setFilter] = useState('inbox');
   const [query, setQuery] = useState('');
@@ -58,6 +79,11 @@ function App() {
   const [tags, setTags] = useState<ReaderTag[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reader, setReader] = useState<ReaderDocument | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<SelectionAnchor | null>(null);
+  const [highlightColor, setHighlightColor] = useState('yellow');
+  const [noteBody, setNoteBody] = useState('');
+  const [tagName, setTagName] = useState('');
   const [readerError, setReaderError] = useState<string | undefined>();
   const [status, setStatus] = useState('正在打开本地知识库…');
   const [listLoading, setListLoading] = useState(true);
@@ -68,6 +94,7 @@ function App() {
   const [documentUrl, setDocumentUrl] = useState('https://www.zhihu.com/');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const readerPaneRef = useRef<HTMLElement>(null);
+  const articleBodyRef = useRef<HTMLDivElement>(null);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedDocument = useMemo(() => documents.find((document) => document.id === selectedId) ?? null, [documents, selectedId]);
@@ -121,7 +148,7 @@ function App() {
     let active = true;
     setReaderLoading(true);
     setReaderError(undefined);
-    void window.desktop.getReaderDocument(selectedId).then((result) => {
+    void window.desktop.getReaderDocument(selectedId, selectedVersionId).then((result) => {
       if (!active) return;
       if (!result.ok || !result.document) {
         setReader(null);
@@ -134,6 +161,11 @@ function App() {
       if (active) setReaderLoading(false);
     });
     return () => { active = false; };
+  }, [selectedId, selectedVersionId]);
+
+  useEffect(() => {
+    setSelectedVersionId(null);
+    setSelection(null);
   }, [selectedId]);
 
   useEffect(() => {
@@ -181,6 +213,38 @@ function App() {
     if (scrollTimer.current) clearTimeout(scrollTimer.current);
     const scrollTop = readerPaneRef.current.scrollTop;
     scrollTimer.current = setTimeout(() => saveState({ scrollTop }), 350);
+  }
+
+  function reloadReader() {
+    if (!reader) return;
+    void window.desktop.getReaderDocument(reader.id, reader.versionId).then((result) => {
+      if (result.ok && result.document) setReader(result.document);
+      else setStatus(errorLabel(result.error));
+    }).catch(() => setStatus('标注刷新失败，数据仍保存在本机。'));
+  }
+
+  function addHighlight() {
+    if (!reader || !selection) return;
+    void window.desktop.createHighlight({ documentId: reader.id, documentVersionId: reader.versionId, ...selection, color: highlightColor }).then((result) => {
+      if (!result.ok) { setStatus(errorLabel(result.error)); return; }
+      setSelection(null); reloadReader();
+    }).catch(() => setStatus('高亮保存失败，正文仍可继续阅读。'));
+  }
+
+  function addNote() {
+    if (!reader || !selection || !noteBody.trim()) return;
+    void window.desktop.createNote({ documentId: reader.id, documentVersionId: reader.versionId, ...selection, body: noteBody.trim() }).then((result) => {
+      if (!result.ok) { setStatus(errorLabel(result.error)); return; }
+      setSelection(null); setNoteBody(''); reloadReader();
+    }).catch(() => setStatus('批注保存失败，正文仍可继续阅读。'));
+  }
+
+  function addTag() {
+    if (!reader || !tagName.trim()) return;
+    void window.desktop.addDocumentTag(reader.id, tagName.trim()).then((result) => {
+      if (!result.ok) { setStatus(errorLabel(result.error)); return; }
+      setTagName(''); reloadReader(); void loadList(reader.id);
+    }).catch(() => setStatus('标签保存失败。'));
   }
 
   function showImportResult(result: { ok: boolean; status: string; versionCreated?: boolean; error?: string }) {
@@ -253,17 +317,18 @@ function App() {
 
         <article className="article-panel panel" aria-label="正文阅读区" ref={readerPaneRef} onScroll={onReaderScroll}>
           {readerLoading ? <div className="empty-state article-empty"><span className="loader" />正在打开正文…</div> : readerError ? <div className="empty-state article-empty"><span className="empty-icon">!</span><strong>{errorLabel(readerError)}</strong><span>列表仍可继续使用，稍后可以重新选择内容。</span></div> : reader ? <>
-            <div className="article-header"><div className="article-source"><span className="source-icon">{reader.source.slice(0, 1).toUpperCase()}</span><span>{reader.source} · {formatDate(reader.fetchedAt)}</span></div><div className="article-actions"><button type="button" className={reader.favorite ? 'icon-button favorite' : 'icon-button'} onClick={() => saveState({ favorite: !reader.favorite })} aria-label={reader.favorite ? '取消收藏' : '收藏'}>{reader.favorite ? '★' : '☆'}</button><select className="state-button" value={reader.status} onChange={(event) => saveState({ status: event.target.value })} aria-label="阅读状态"><option value="unread">未读</option><option value="reading">阅读中</option><option value="processed">已处理</option><option value="archived">已归档</option></select><select className="state-button" value={reader.knowledgeLevel} onChange={(event) => saveState({ knowledgeLevel: event.target.value })} aria-label="知识层级"><option value="">未分层</option><option value="short">短期消费</option><option value="medium">中期实践</option><option value="long">长期内化</option></select></div></div>
+            <div className="article-header"><div className="article-source"><span className="source-icon">{reader.source.slice(0, 1).toUpperCase()}</span><span>{reader.source} · {formatDate(reader.fetchedAt)}</span></div><div className="article-actions"><button type="button" className={reader.favorite ? 'icon-button favorite' : 'icon-button'} onClick={() => saveState({ favorite: !reader.favorite })} aria-label={reader.favorite ? '取消收藏' : '收藏'}>{reader.favorite ? '★' : '☆'}</button><select className="state-button" value={reader.status} onChange={(event) => saveState({ status: event.target.value })} aria-label="阅读状态"><option value="unread">未读</option><option value="reading">阅读中</option><option value="processed">已处理</option><option value="archived">已归档</option></select><select className="state-button" value={reader.knowledgeLevel} onChange={(event) => saveState({ knowledgeLevel: event.target.value })} aria-label="知识层级"><option value="">未分层</option><option value="short">短期消费</option><option value="medium">中期实践</option><option value="long">长期内化</option></select><select className="state-button" value={reader.versionId} onChange={(event) => setSelectedVersionId(event.target.value)} aria-label="正文版本">{reader.versions.map((version) => <option key={version.versionId} value={version.versionId}>v{version.versionNumber}{version.isCurrent ? ' 当前' : ''}</option>)}</select></div></div>
             <h2 className="article-title">{reader.title || '无标题内容'}</h2>
             <div className="article-meta"><span>{reader.author || '作者未知'}</span><span>{reader.estimatedMinutes} 分钟阅读</span><span className={`state-pill ${reader.status}`}>{STATUS_LABELS[reader.status]}</span>{reader.knowledgeLevel && <span className="level-pill">{LEVEL_LABELS[reader.knowledgeLevel]}</span>}</div>
             {reader.importError && <div className="sync-warning">同步记录：{reader.importError}。已保存的正文仍可离线阅读。</div>}
-            {reader.bodyState !== 'ok' ? <div className="empty-state body-empty"><span className="empty-icon">{reader.bodyState === 'corrupt' ? '!' : '∅'}</span><strong>{reader.bodyState === 'corrupt' ? '正文损坏' : '正文为空'}</strong><span>该条内容没有可安全显示的离线正文。</span></div> : <div className="article-body" dangerouslySetInnerHTML={{ __html: safeReaderHtml(reader.body) }} />}
-            {(reader.tags.length > 0 || reader.highlights.length > 0 || reader.notes.length > 0 || reader.processingResults.length > 0) && <div className="article-extras">
-              {reader.tags.length > 0 && <section><h3>标签</h3><div className="tag-list">{reader.tags.map((tag) => <span key={tag.id}># {tag.name}</span>)}</div></section>}
-              {reader.highlights.length > 0 && <section><h3>标注</h3>{reader.highlights.map((highlight) => <blockquote key={highlight.id}>{highlight.quote}</blockquote>)}</section>}
-              {reader.notes.length > 0 && <section><h3>批注</h3>{reader.notes.map((note) => <p key={note.id}>{note.body}</p>)}</section>}
+            {reader.bodyState !== 'ok' ? <div className="empty-state body-empty"><span className="empty-icon">{reader.bodyState === 'corrupt' ? '!' : '∅'}</span><strong>{reader.bodyState === 'corrupt' ? '正文损坏' : '正文为空'}</strong><span>该条内容没有可安全显示的离线正文。</span></div> : <div ref={articleBodyRef} className="article-body" onMouseUp={() => { if (articleBodyRef.current) setSelection(selectedTextAnchor(articleBodyRef.current)); }} dangerouslySetInnerHTML={{ __html: safeReaderHtml(reader.body) }} />}
+            {selection && <div className="annotation-toolbar"><span>已选择 {selection.exact.length} 字</span><select value={highlightColor} onChange={(event) => setHighlightColor(event.target.value)} aria-label="高亮颜色"><option value="yellow">黄色</option><option value="blue">蓝色</option><option value="green">绿色</option><option value="pink">粉色</option></select><button type="button" onClick={addHighlight}>高亮</button><input value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="批注内容" aria-label="批注内容" /><button type="button" disabled={!noteBody.trim()} onClick={addNote}>添加批注</button><button type="button" onClick={() => setSelection(null)}>取消</button></div>}
+            <div className="article-extras">
+              <section><h3>标签</h3><div className="tag-list">{reader.tags.map((tag) => <span key={tag.id}># {tag.name} <button type="button" onClick={() => { const next = window.prompt('编辑标签', tag.name); if (next?.trim()) void window.desktop.renameDocumentTag(tag.id, next.trim()).then(reloadReader).then(() => void loadList(reader.id)); }} aria-label={`编辑标签 ${tag.name}`}>编辑</button><button type="button" onClick={() => { if (window.confirm(`删除标签“${tag.name}”？`)) void window.desktop.removeDocumentTag(reader.id, tag.id).then(reloadReader); }} aria-label={`删除标签 ${tag.name}`}>×</button></span>)}<input value={tagName} onChange={(event) => setTagName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addTag(); }} placeholder="添加标签" aria-label="添加标签" /><button type="button" disabled={!tagName.trim()} onClick={addTag}>添加</button></div></section>
+              {reader.highlights.length > 0 && <section><h3>标注</h3>{reader.highlights.map((highlight) => <blockquote key={highlight.id} className={`highlight-${highlight.color}`}><span>{highlight.quote}</span>{highlight.status === 'needs_repair' && <small>待修复</small>}<select value={highlight.color} onChange={(event) => void window.desktop.updateHighlight(highlight.id, { color: event.target.value }).then(reloadReader)} aria-label="高亮颜色"><option value="yellow">黄</option><option value="blue">蓝</option><option value="green">绿</option><option value="pink">粉</option></select><button type="button" onClick={() => { if (window.confirm('删除这条高亮？')) void window.desktop.deleteHighlight(highlight.id).then(reloadReader); }}>删除</button></blockquote>)}</section>}
+              {reader.notes.length > 0 && <section><h3>批注</h3>{reader.notes.map((note) => <p key={note.id}><span>{note.body}</span>{note.status === 'needs_repair' && <small>待修复</small>}<button type="button" onClick={() => { const next = window.prompt('编辑批注', note.body); if (next != null && next.trim()) void window.desktop.updateNote(note.id, next.trim()).then(reloadReader); }}>编辑</button><button type="button" onClick={() => { if (window.confirm('删除这条批注？')) void window.desktop.deleteNote(note.id).then(reloadReader); }}>删除</button></p>)}</section>}
               {reader.processingResults.length > 0 && <section><h3>处理结果</h3>{reader.processingResults.slice(0, 3).map((result) => <div className="processing-result" key={result.id}><b>{result.kind}</b><span>{result.status}</span><p>{typeof result.payload === 'string' ? result.payload : JSON.stringify(result.payload)}</p></div>)}</section>}
-            </div>}
+            </div>
           </> : <div className="empty-state article-empty"><span className="empty-icon">✦</span><strong>选择一篇内容开始阅读</strong><span>正文、标注和阅读进度都保存在本机。</span></div>}
         </article>
       </section>

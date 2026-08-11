@@ -19,7 +19,7 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   const directory = tempDirectory();
   const databasePath = path.join(directory, 'knowledge.sqlite');
   const database = openKnowledgeDatabase(databasePath);
-  assert.equal(database.schemaVersion, 3);
+  assert.equal(database.schemaVersion, 4);
   const backup = database.exportJson();
   assert.deepEqual(database.checkJsonBackup(backup).valid, true);
   database.close();
@@ -33,11 +33,53 @@ test('initializes the schema, enables WAL, and rolls back a failed migration', (
   assert.equal(raw.pragma('journal_mode', { simple: true }), 'wal');
   assert.throws(() => migrateDatabase(raw, [
     { version: 1, up() {} },
-    { version: 4, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
+    { version: 5, up(db) { db.exec('CREATE TABLE transient_migration_table (id INTEGER)'); throw new Error('expected migration failure'); } },
   ]), /数据库迁移失败/);
   assert.equal(raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'transient_migration_table'").get(), undefined);
-  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 3);
+  assert.equal(raw.prepare('SELECT MAX(version) AS version FROM schema_migrations').get().version, 4);
   raw.close();
+  closeAndRemove(directory);
+});
+
+test('persists anchored annotations and remaps them across content versions', () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, 'knowledge.sqlite'), { startupBackup: false });
+  const initialBody = '脱敏开头。重复摘录。中间。重复摘录。脱敏结尾。';
+  const initial = database.upsertDocument({ source: 'fixture', externalId: 'annotation-fixture', title: '标注 fixture', body: initialBody });
+  const secondStart = initialBody.indexOf('重复摘录', initialBody.indexOf('重复摘录') + 1);
+  const highlight = database.addHighlight({
+    documentId: initial.documentId,
+    documentVersionId: initial.versionId,
+    exact: '重复摘录',
+    prefix: '中间。',
+    suffix: '。脱敏结尾。',
+    start: secondStart,
+    end: secondStart + 4,
+    color: 'blue',
+  });
+  assert.equal(highlight.startOffset, secondStart);
+  assert.equal(highlight.status, 'resolved');
+  database.addNote({ documentId: initial.documentId, documentVersionId: initial.versionId, body: '保留这个批注', exact: '重复摘录', prefix: '中间。', suffix: '。脱敏结尾。', start: secondStart, end: secondStart + 4 });
+
+  const changedBody = '新增前缀。脱敏开头。重复摘录。中间。重复摘录。脱敏结尾。新增后缀。';
+  const updated = database.upsertDocument({ source: 'fixture', externalId: 'annotation-fixture', title: '标注 fixture', body: changedBody });
+  const current = database.getDocument(initial.documentId);
+  assert.equal(updated.versionCreated, true);
+  assert.equal(current.highlights[0].status, 'resolved');
+  assert.equal(current.highlights[0].resolvedStart, changedBody.indexOf('重复摘录', changedBody.indexOf('重复摘录') + 1));
+  assert.equal(current.notes[0].body, '保留这个批注');
+  assert.equal(database.listDocumentVersions(initial.documentId).length, 2);
+  assert.equal(database.getDocument(initial.documentId, initial.versionId).isCurrentVersion, false);
+
+  database.updateHighlight(highlight.id, { color: 'green' });
+  database.updateNote(current.notes[0].id, { body: '已编辑批注' });
+  database.addTag(initial.documentId, '可复用');
+  const backup = database.exportJson();
+  assert.equal(backup.tables.highlights[0].prefix, '中间。');
+  assert.equal(backup.tables.notes[0].body, '已编辑批注');
+  database.deleteHighlight(highlight.id);
+  database.deleteNote(current.notes[0].id);
+  database.close();
   closeAndRemove(directory);
 });
 

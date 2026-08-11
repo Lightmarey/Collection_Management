@@ -418,15 +418,76 @@ ipcMain.handle('reader:bootstrap', (event, options?: ReaderListOptions) => {
   }
 });
 
-ipcMain.handle('reader:get-document', (event, documentId?: unknown) => {
+ipcMain.handle('reader:get-document', (event, documentId?: unknown, versionId?: unknown) => {
   assertTrustedLocalSender(event.sender);
   if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
   try {
-    const document = knowledgeDatabase.getDocument(typeof documentId === 'string' ? documentId : '');
+    const document = knowledgeDatabase.getDocument(typeof documentId === 'string' ? documentId : '', typeof versionId === 'string' ? versionId : null);
+    if (document && typeof document === 'object' && 'id' in document) {
+      (document as Record<string, unknown>).versions = knowledgeDatabase.listDocumentVersions(document.id as string);
+    }
     return document ? { ok: true, document } : { ok: false, error: 'document_not_found' };
   } catch (error) {
     return readerDatabaseError('reader-document-failed', error);
   }
+});
+
+function objectInput(value: unknown) {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+ipcMain.handle('annotation:create-highlight', (event, input?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, highlight: knowledgeDatabase.addHighlight(objectInput(input) as Parameters<KnowledgeDatabase['addHighlight']>[0]) }; } catch (error) { return readerDatabaseError('highlight-create-failed', error); }
+});
+
+ipcMain.handle('annotation:update-highlight', (event, id?: unknown, input?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, highlight: knowledgeDatabase.updateHighlight(typeof id === 'string' ? id : '', objectInput(input)) }; } catch (error) { return readerDatabaseError('highlight-update-failed', error); }
+});
+
+ipcMain.handle('annotation:delete-highlight', (event, id?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, ...knowledgeDatabase.deleteHighlight(typeof id === 'string' ? id : '') }; } catch (error) { return readerDatabaseError('highlight-delete-failed', error); }
+});
+
+ipcMain.handle('annotation:create-note', (event, input?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, note: knowledgeDatabase.addNote(objectInput(input) as Parameters<KnowledgeDatabase['addNote']>[0]) }; } catch (error) { return readerDatabaseError('note-create-failed', error); }
+});
+
+ipcMain.handle('annotation:update-note', (event, id?: unknown, input?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, note: knowledgeDatabase.updateNote(typeof id === 'string' ? id : '', objectInput(input)) }; } catch (error) { return readerDatabaseError('note-update-failed', error); }
+});
+
+ipcMain.handle('annotation:delete-note', (event, id?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, ...knowledgeDatabase.deleteNote(typeof id === 'string' ? id : '') }; } catch (error) { return readerDatabaseError('note-delete-failed', error); }
+});
+
+ipcMain.handle('annotation:add-tag', (event, documentId?: unknown, name?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, tag: knowledgeDatabase.addTag(typeof documentId === 'string' ? documentId : '', typeof name === 'string' ? name : '') }; } catch (error) { return readerDatabaseError('tag-create-failed', error); }
+});
+
+ipcMain.handle('annotation:remove-tag', (event, documentId?: unknown, tagId?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, ...knowledgeDatabase.removeTag(typeof documentId === 'string' ? documentId : '', typeof tagId === 'string' ? tagId : '') }; } catch (error) { return readerDatabaseError('tag-delete-failed', error); }
+});
+
+ipcMain.handle('annotation:rename-tag', (event, tagId?: unknown, name?: unknown) => {
+  assertTrustedLocalSender(event.sender);
+  if (!knowledgeDatabase) return { ok: false, error: 'database_unavailable' };
+  try { return { ok: true, tag: knowledgeDatabase.renameTag(typeof tagId === 'string' ? tagId : '', typeof name === 'string' ? name : '') }; } catch (error) { return readerDatabaseError('tag-update-failed', error); }
 });
 
 ipcMain.handle('reader:save-state', (event, input?: unknown) => {

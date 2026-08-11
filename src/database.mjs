@@ -2,8 +2,9 @@ import Database from 'better-sqlite3';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createTextAnchor, locateTextAnchor, plainText } from './annotation-anchor.mjs';
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 const BACKUP_TABLES = [
   'documents',
@@ -27,8 +28,8 @@ const TABLE_COLUMNS = {
   document_versions: ['id', 'document_id', 'version_number', 'title', 'author', 'body', 'content_hash', 'published_at', 'fetched_at', 'media_json', 'import_error', 'created_at'],
   collections: ['id', 'source', 'external_id', 'name', 'description', 'created_at', 'updated_at'],
   collection_items: ['collection_id', 'document_id', 'position', 'created_at'],
-  highlights: ['id', 'document_id', 'document_version_id', 'quote', 'start_offset', 'end_offset', 'color', 'created_at'],
-  notes: ['id', 'document_id', 'document_version_id', 'body', 'created_at', 'updated_at'],
+  highlights: ['id', 'document_id', 'document_version_id', 'quote', 'exact', 'prefix', 'suffix', 'start_offset', 'end_offset', 'resolved_start', 'resolved_end', 'status', 'color', 'created_at', 'updated_at'],
+  notes: ['id', 'document_id', 'document_version_id', 'body', 'exact', 'prefix', 'suffix', 'start_offset', 'end_offset', 'resolved_start', 'resolved_end', 'status', 'created_at', 'updated_at'],
   tags: ['id', 'name', 'created_at'],
   document_tags: ['document_id', 'tag_id', 'created_at'],
   processing_results: ['id', 'document_id', 'document_version_id', 'kind', 'status', 'payload_json', 'created_at'],
@@ -226,6 +227,31 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 4,
+    up(db) {
+      db.exec(`
+        ALTER TABLE highlights ADD COLUMN exact TEXT NOT NULL DEFAULT '';
+        ALTER TABLE highlights ADD COLUMN prefix TEXT NOT NULL DEFAULT '';
+        ALTER TABLE highlights ADD COLUMN suffix TEXT NOT NULL DEFAULT '';
+        ALTER TABLE highlights ADD COLUMN resolved_start INTEGER;
+        ALTER TABLE highlights ADD COLUMN resolved_end INTEGER;
+        ALTER TABLE highlights ADD COLUMN status TEXT NOT NULL DEFAULT 'needs_repair';
+        ALTER TABLE highlights ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+        ALTER TABLE notes ADD COLUMN exact TEXT NOT NULL DEFAULT '';
+        ALTER TABLE notes ADD COLUMN prefix TEXT NOT NULL DEFAULT '';
+        ALTER TABLE notes ADD COLUMN suffix TEXT NOT NULL DEFAULT '';
+        ALTER TABLE notes ADD COLUMN start_offset INTEGER;
+        ALTER TABLE notes ADD COLUMN end_offset INTEGER;
+        ALTER TABLE notes ADD COLUMN resolved_start INTEGER;
+        ALTER TABLE notes ADD COLUMN resolved_end INTEGER;
+        ALTER TABLE notes ADD COLUMN status TEXT NOT NULL DEFAULT 'unanchored';
+        UPDATE highlights SET exact = quote, resolved_start = start_offset, resolved_end = end_offset,
+          status = CASE WHEN start_offset IS NULL THEN 'needs_repair' ELSE 'resolved' END,
+          updated_at = created_at WHERE exact = '';
+      `);
+    },
+  },
 ];
 
 const READING_STATUSES = new Set(['unread', 'reading', 'processed', 'archived']);
@@ -375,6 +401,7 @@ export class KnowledgeDatabase {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(versionId, existing.id, versionNumber, title, author, body, contentHash(body), publishedAt, fetchedAt, media, importError, timestamp);
       this.db.prepare(`UPDATE documents SET current_version_id = ?, title = ?, author = ?, url = ?, published_at = ?, fetched_at = ?, media_json = ?, import_error = ?, updated_at = ? WHERE id = ?`)
         .run(versionId, title, author, url, publishedAt, fetchedAt, media, importError, timestamp, existing.id);
+      this._remapAnnotations(existing.id, versionId, body);
       this._refreshSearchIndex(existing.id);
       return { documentId: existing.id, versionId, created: false, versionCreated: true };
     }
@@ -424,21 +451,85 @@ export class KnowledgeDatabase {
     }
   }
 
+  _version(documentId, versionId = null) {
+    const id = text(documentId).trim();
+    const row = versionId
+      ? this.db.prepare('SELECT v.* FROM document_versions v WHERE v.document_id = ? AND v.id = ?').get(id, versionId)
+      : this.db.prepare('SELECT v.* FROM documents d JOIN document_versions v ON v.id = d.current_version_id WHERE d.id = ?').get(id);
+    if (!row) throw new DatabaseError('文档版本不存在', 'VERSION_NOT_FOUND');
+    return row;
+  }
+
+  _anchor(documentId, input, allowEmpty = false) {
+    const version = this._version(documentId, input?.documentVersionId ?? null);
+    const source = plainText(version.body);
+    const rawExact = text(input?.exact ?? input?.quote);
+    const start = input?.start ?? input?.startOffset;
+    const end = input?.end ?? input?.endOffset;
+    const exact = rawExact || (Number.isFinite(Number(start)) && Number.isFinite(Number(end)) ? source.slice(Number(start), Number(end)) : '');
+    if (!exact && allowEmpty) return { version, anchor: null };
+    if (!exact) throw new DatabaseError('标注必须包含引文', 'VALIDATION_ERROR');
+    let anchorStart = Number.isFinite(Number(start)) ? Number(start) : source.indexOf(exact);
+    if (source.slice(anchorStart, anchorStart + exact.length) !== exact) anchorStart = source.indexOf(exact, Math.max(0, anchorStart - exact.length));
+    if (anchorStart < 0) throw new DatabaseError('引文不在当前正文中', 'ANCHOR_NOT_FOUND');
+    const anchor = createTextAnchor({
+      text: source,
+      start: anchorStart,
+      end: anchorStart + exact.length,
+      exact,
+      prefix: input?.prefix,
+      suffix: input?.suffix,
+    });
+    return { version, anchor, resolution: locateTextAnchor(source, anchor) };
+  }
+
+  _remapAnnotations(documentId, versionId, body) {
+    const source = plainText(body);
+    const resolve = (row) => locateTextAnchor(source, { exact: row.exact || row.quote, prefix: row.prefix, suffix: row.suffix, start: row.start_offset });
+    const updateHighlight = this.db.prepare(`UPDATE highlights SET document_version_id = ?, status = ?, resolved_start = ?, resolved_end = ?, updated_at = ? WHERE id = ?`);
+    for (const row of this.db.prepare('SELECT * FROM highlights WHERE document_id = ?').all(documentId)) {
+      const result = resolve(row);
+      updateHighlight.run(versionId, result.status, result.start, result.end, now(), row.id);
+    }
+    const updateNote = this.db.prepare(`UPDATE notes SET document_version_id = ?, status = ?, resolved_start = ?, resolved_end = ?, updated_at = ? WHERE id = ?`);
+    for (const row of this.db.prepare("SELECT * FROM notes WHERE document_id = ? AND exact <> ''").all(documentId)) {
+      const result = resolve(row);
+      updateNote.run(versionId, result.status, result.start, result.end, now(), row.id);
+    }
+  }
+
   addHighlight(input) {
     try {
       const value = {
         id: input?.id || randomUUID(),
         documentId: text(input?.documentId),
-        documentVersionId: input?.documentVersionId || null,
-        quote: text(input?.quote),
-        startOffset: input?.startOffset ?? null,
-        endOffset: input?.endOffset ?? null,
+        documentVersionId: null,
+        quote: text(input?.exact ?? input?.quote),
+        exact: '',
+        prefix: '',
+        suffix: '',
+        startOffset: null,
+        endOffset: null,
+        resolvedStart: null,
+        resolvedEnd: null,
+        status: 'needs_repair',
         color: text(input?.color) || 'yellow',
         createdAt: now(),
+        updatedAt: now(),
       };
       return this.db.transaction(() => {
-        this.db.prepare(`INSERT INTO highlights (id, document_id, document_version_id, quote, start_offset, end_offset, color, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(value.id, value.documentId, value.documentVersionId, value.quote, value.startOffset, value.endOffset, value.color, value.createdAt);
+        const prepared = this._anchor(value.documentId, input);
+        value.documentVersionId = prepared.version.id;
+        Object.assign(value, prepared.anchor, {
+          quote: prepared.anchor.exact,
+          startOffset: prepared.anchor.start,
+          endOffset: prepared.anchor.end,
+          resolvedStart: prepared.resolution.start,
+          resolvedEnd: prepared.resolution.end,
+          status: prepared.resolution.status,
+        });
+        this.db.prepare(`INSERT INTO highlights (id, document_id, document_version_id, quote, exact, prefix, suffix, start_offset, end_offset, resolved_start, resolved_end, status, color, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.id, value.documentId, value.documentVersionId, value.quote, value.exact, value.prefix, value.suffix, value.startOffset, value.endOffset, value.resolvedStart, value.resolvedEnd, value.status, value.color, value.createdAt, value.updatedAt);
         this._refreshSearchIndex(value.documentId);
         return value;
       })();
@@ -452,14 +543,32 @@ export class KnowledgeDatabase {
       const value = {
         id: input?.id || randomUUID(),
         documentId: text(input?.documentId),
-        documentVersionId: input?.documentVersionId || null,
+        documentVersionId: null,
         body: text(input?.body),
+        exact: '',
+        prefix: '',
+        suffix: '',
+        startOffset: null,
+        endOffset: null,
+        resolvedStart: null,
+        resolvedEnd: null,
+        status: 'unanchored',
         createdAt: now(),
         updatedAt: now(),
       };
       return this.db.transaction(() => {
-        this.db.prepare(`INSERT INTO notes (id, document_id, document_version_id, body, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)`).run(value.id, value.documentId, value.documentVersionId, value.body, value.createdAt, value.updatedAt);
+        const prepared = this._anchor(value.documentId, input, true);
+        value.documentVersionId = prepared.version.id;
+        if (prepared.anchor) Object.assign(value, prepared.anchor, {
+          exact: prepared.anchor.exact,
+          startOffset: prepared.anchor.start,
+          endOffset: prepared.anchor.end,
+          resolvedStart: prepared.resolution.start,
+          resolvedEnd: prepared.resolution.end,
+          status: prepared.resolution.status,
+        });
+        this.db.prepare(`INSERT INTO notes (id, document_id, document_version_id, body, exact, prefix, suffix, start_offset, end_offset, resolved_start, resolved_end, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.id, value.documentId, value.documentVersionId, value.body, value.exact, value.prefix, value.suffix, value.startOffset, value.endOffset, value.resolvedStart, value.resolvedEnd, value.status, value.createdAt, value.updatedAt);
         this._refreshSearchIndex(value.documentId);
         return value;
       })();
@@ -486,6 +595,107 @@ export class KnowledgeDatabase {
       })();
     } catch (error) {
       throw dbError('写入标签', error);
+    }
+  }
+
+  updateHighlight(id, input = {}) {
+    try {
+      return this.db.transaction(() => {
+        const existing = this.db.prepare('SELECT * FROM highlights WHERE id = ?').get(text(id));
+        if (!existing) throw new DatabaseError('标注不存在', 'ANNOTATION_NOT_FOUND');
+        const prepared = this._anchor(existing.document_id, { ...existing, ...input,
+          quote: input.exact ?? input.quote ?? existing.exact ?? existing.quote,
+          startOffset: input.start ?? input.startOffset ?? existing.start_offset,
+          endOffset: input.end ?? input.endOffset ?? existing.end_offset,
+          documentVersionId: input.documentVersionId ?? existing.document_version_id });
+        const color = text(input.color ?? existing.color) || 'yellow';
+        const updatedAt = now();
+        this.db.prepare(`UPDATE highlights SET document_version_id = ?, quote = ?, exact = ?, prefix = ?, suffix = ?, start_offset = ?, end_offset = ?, resolved_start = ?, resolved_end = ?, status = ?, color = ?, updated_at = ? WHERE id = ?`)
+          .run(prepared.version.id, prepared.anchor.exact, prepared.anchor.exact, prepared.anchor.prefix, prepared.anchor.suffix, prepared.anchor.start, prepared.anchor.end, prepared.resolution.start, prepared.resolution.end, prepared.resolution.status, color, updatedAt, existing.id);
+        this._refreshSearchIndex(existing.document_id);
+        return { id: existing.id, documentId: existing.document_id, documentVersionId: prepared.version.id, exact: prepared.anchor.exact, quote: prepared.anchor.exact, prefix: prepared.anchor.prefix, suffix: prepared.anchor.suffix, start: prepared.anchor.start, end: prepared.anchor.end, status: prepared.resolution.status, color, updatedAt };
+      })();
+    } catch (error) {
+      throw dbError('更新标注', error);
+    }
+  }
+
+  deleteHighlight(id) {
+    try {
+      return this.db.transaction(() => {
+        const existing = this.db.prepare('SELECT document_id FROM highlights WHERE id = ?').get(text(id));
+        if (!existing) throw new DatabaseError('标注不存在', 'ANNOTATION_NOT_FOUND');
+        this.db.prepare('DELETE FROM highlights WHERE id = ?').run(text(id));
+        this._refreshSearchIndex(existing.document_id);
+        return { id: text(id), deleted: true };
+      })();
+    } catch (error) {
+      throw dbError('删除标注', error);
+    }
+  }
+
+  updateNote(id, input = {}) {
+    try {
+      return this.db.transaction(() => {
+        const existing = this.db.prepare('SELECT * FROM notes WHERE id = ?').get(text(id));
+        if (!existing) throw new DatabaseError('批注不存在', 'ANNOTATION_NOT_FOUND');
+        const prepared = this._anchor(existing.document_id, { ...existing, ...input,
+          body: input.body ?? existing.body,
+          exact: input.exact ?? input.quote ?? existing.exact,
+          startOffset: input.start ?? input.startOffset ?? existing.start_offset,
+          endOffset: input.end ?? input.endOffset ?? existing.end_offset,
+          documentVersionId: input.documentVersionId ?? existing.document_version_id }, true);
+        const updatedAt = now();
+        const anchor = prepared.anchor;
+        this.db.prepare(`UPDATE notes SET document_version_id = ?, body = ?, exact = ?, prefix = ?, suffix = ?, start_offset = ?, end_offset = ?, resolved_start = ?, resolved_end = ?, status = ?, updated_at = ? WHERE id = ?`)
+          .run(prepared.version.id, text(input.body ?? existing.body), anchor?.exact ?? '', anchor?.prefix ?? '', anchor?.suffix ?? '', anchor?.start ?? null, anchor?.end ?? null, prepared.resolution?.start ?? null, prepared.resolution?.end ?? null, prepared.resolution?.status ?? 'unanchored', updatedAt, existing.id);
+        this._refreshSearchIndex(existing.document_id);
+        return { id: existing.id, documentId: existing.document_id, body: text(input.body ?? existing.body), status: prepared.resolution?.status ?? 'unanchored', updatedAt };
+      })();
+    } catch (error) {
+      throw dbError('更新批注', error);
+    }
+  }
+
+  deleteNote(id) {
+    try {
+      return this.db.transaction(() => {
+        const existing = this.db.prepare('SELECT document_id FROM notes WHERE id = ?').get(text(id));
+        if (!existing) throw new DatabaseError('批注不存在', 'ANNOTATION_NOT_FOUND');
+        this.db.prepare('DELETE FROM notes WHERE id = ?').run(text(id));
+        this._refreshSearchIndex(existing.document_id);
+        return { id: text(id), deleted: true };
+      })();
+    } catch (error) {
+      throw dbError('删除批注', error);
+    }
+  }
+
+  removeTag(documentId, tagId) {
+    try {
+      return this.db.transaction(() => {
+        this.db.prepare('DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?').run(text(documentId), text(tagId));
+        this._refreshSearchIndex(text(documentId));
+        return { documentId: text(documentId), tagId: text(tagId), deleted: true };
+      })();
+    } catch (error) {
+      throw dbError('删除标签', error);
+    }
+  }
+
+  renameTag(tagId, name) {
+    const tagName = text(name).trim();
+    if (!tagName) throw new DatabaseError('标签不能为空', 'VALIDATION_ERROR');
+    try {
+      return this.db.transaction(() => {
+        const tag = this.db.prepare('SELECT * FROM tags WHERE id = ?').get(text(tagId));
+        if (!tag) throw new DatabaseError('标签不存在', 'TAG_NOT_FOUND');
+        this.db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(tagName, text(tagId));
+        for (const row of this.db.prepare('SELECT document_id FROM document_tags WHERE tag_id = ?').all(text(tagId))) this._refreshSearchIndex(row.document_id);
+        return { id: text(tagId), name: tagName };
+      })();
+    } catch (error) {
+      throw dbError('更新标签', error);
     }
   }
 
@@ -553,31 +763,57 @@ export class KnowledgeDatabase {
     }
   }
 
-  getDocument(documentId) {
+  listDocumentVersions(documentId) {
+    const id = text(documentId).trim();
+    try {
+      return this.db.prepare(`
+        SELECT v.id AS versionId, v.document_id AS documentId, v.version_number AS versionNumber,
+          v.title, v.created_at AS createdAt, v.content_hash AS contentHash,
+          v.id = d.current_version_id AS isCurrent
+        FROM document_versions v JOIN documents d ON d.id = v.document_id
+        WHERE v.document_id = ? ORDER BY v.version_number DESC
+      `).all(id).map((row) => ({ ...row, isCurrent: Boolean(row.isCurrent) }));
+    } catch (error) {
+      throw dbError('读取文档版本', error);
+    }
+  }
+
+  getDocument(documentId, versionId = null) {
     const id = text(documentId).trim();
     if (!id) return null;
     try {
       const row = this.db.prepare(`
         SELECT d.id, d.source, d.external_id AS externalId, d.title, d.author, d.url,
           d.published_at AS publishedAt, d.fetched_at AS fetchedAt, d.import_error AS importError,
-          v.id AS versionId, v.version_number AS versionNumber, v.body,
+          v.id AS versionId, v.version_number AS versionNumber, v.body, d.current_version_id AS currentVersionId,
           COALESCE(rs.status, 'unread') AS status, COALESCE(rs.favorite, 0) AS favorite,
           COALESCE(rs.knowledge_level, '') AS knowledgeLevel, COALESCE(rs.scroll_top, 0) AS scrollTop,
           CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 0 ELSE 1 END AS hasBody,
           CAST(CASE WHEN length(COALESCE(v.body, '')) = 0 THEN 1 ELSE (length(v.body) + 1199) / 1200 END AS INTEGER) AS estimatedMinutes
-        FROM documents d JOIN document_versions v ON v.id = d.current_version_id
+        FROM documents d JOIN document_versions v ON v.id = ${versionId ? '?' : 'd.current_version_id'}
         LEFT JOIN reading_states rs ON rs.document_id = d.id WHERE d.id = ?
-      `).get(id);
+      `).get(...(versionId ? [versionId, id] : [id]));
       if (!row) return null;
       const body = typeof row.body === 'string' ? row.body : '';
       const highlights = this.db.prepare(`
-        SELECT id, quote, start_offset AS startOffset, end_offset AS endOffset, color, created_at AS createdAt
+        SELECT id, document_version_id AS documentVersionId, quote, exact, prefix, suffix,
+          start_offset AS startOffset, end_offset AS endOffset, resolved_start AS resolvedStart,
+          resolved_end AS resolvedEnd, status, color, created_at AS createdAt, updated_at AS updatedAt
         FROM highlights WHERE document_id = ? ORDER BY created_at ASC
-      `).all(id);
+      `).all(id).map((row) => {
+        const resolved = locateTextAnchor(body, row);
+        return { ...row, exact: row.exact || row.quote, start: row.startOffset, end: row.endOffset, status: resolved.status, resolvedStart: resolved.start, resolvedEnd: resolved.end };
+      });
       const notes = this.db.prepare(`
-        SELECT id, body, created_at AS createdAt, updated_at AS updatedAt
+        SELECT id, document_version_id AS documentVersionId, body, exact, prefix, suffix,
+          start_offset AS startOffset, end_offset AS endOffset, resolved_start AS resolvedStart,
+          resolved_end AS resolvedEnd, status, created_at AS createdAt, updated_at AS updatedAt
         FROM notes WHERE document_id = ? ORDER BY created_at ASC
-      `).all(id);
+      `).all(id).map((row) => {
+        if (!row.exact) return { ...row, status: 'unanchored', start: null, end: null };
+        const resolved = locateTextAnchor(body, row);
+        return { ...row, start: row.startOffset, end: row.endOffset, status: resolved.status, resolvedStart: resolved.start, resolvedEnd: resolved.end };
+      });
       const processingResults = this.db.prepare(`
         SELECT id, kind, status, payload_json AS payloadJson, created_at AS createdAt
         FROM processing_results WHERE document_id = ? ORDER BY created_at DESC
@@ -589,6 +825,7 @@ export class KnowledgeDatabase {
       return {
         ...row,
         body,
+        isCurrentVersion: row.versionId === row.currentVersionId,
         bodyState: body.includes('\u0000') ? 'corrupt' : body.trim() ? 'ok' : 'empty',
         hasBody: Boolean(row.hasBody),
         favorite: Boolean(row.favorite),
@@ -746,7 +983,8 @@ export class KnowledgeDatabase {
     if (!rows.length) return;
     const columns = TABLE_COLUMNS[table];
     const statement = this.db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
-    for (const row of rows) statement.run(...columns.map((column) => row[column] ?? (column === 'media_json' ? '[]' : null)));
+    const defaults = { media_json: '[]', exact: '', prefix: '', suffix: '', status: table === 'highlights' ? 'needs_repair' : table === 'notes' ? 'unanchored' : null, updated_at: '' };
+    for (const row of rows) statement.run(...columns.map((column) => row[column] ?? defaults[column] ?? null));
   }
 }
 
