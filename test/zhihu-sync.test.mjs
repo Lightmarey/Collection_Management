@@ -46,7 +46,9 @@ test('stops safely when a single response signals login expiry', async () => {
   assert.equal(result.status, SYNC_STATUS.STOPPED);
   assert.equal(result.failureType, FAILURE_TYPES.LOGIN_EXPIRED);
   assert.equal(calls, 1);
-  assert.equal(result.progress.remaining, 1);
+  assert.equal(result.progress.remaining, 0);
+  assert.equal(result.progress.skipped, 1);
+  assert.equal(result.items[1].failureType, FAILURE_TYPES.LOGIN_EXPIRED);
 });
 
 test('skips unchanged items without fetching their正文', async () => {

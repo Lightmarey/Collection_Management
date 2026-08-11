@@ -16,6 +16,9 @@ export const IMPORT_STATUS = Object.freeze({
   HTTP_ERROR: FAILURE_TYPES.HTTP_ERROR,
 });
 
+const ZHIHU_ARTICLE_INCLUDE = 'content,topics,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,relationship,ip_info,relationship.vote,author.badge_v2';
+const ZHIHU_ANSWER_INCLUDE = '.settings,content,editable_content,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,attachment,reaction,ip_info,pagination_info,endorsements,question.topics,question.author,reaction.relation.voting,author.badge_v2,settings.table_of_contents.enabled';
+
 const ALLOWED_KINDS = new Set(['markdown', 'html']);
 const SAFE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
 
@@ -185,6 +188,46 @@ function failureResult(status, error = status) {
   return { ok: false, status, error };
 }
 
+function detailDate(valueToFormat) {
+  if (typeof valueToFormat === 'number' && Number.isFinite(valueToFormat)) {
+    return new Date(valueToFormat > 10_000_000_000 ? valueToFormat : valueToFormat * 1000).toISOString();
+  }
+  return value(valueToFormat);
+}
+
+export function zhihuContentDetailRequest(rawUrl) {
+  const normalized = normalizeUrl(value(rawUrl));
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== 'https:') return null;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    let type;
+    let id;
+    if ((parsed.hostname === 'www.zhihu.com' || parsed.hostname === 'zhihu.com') && segments[0] === 'question' && segments[2] === 'answer') {
+      type = 'answer';
+      id = segments[3];
+    } else if ((parsed.hostname === 'www.zhihu.com' || parsed.hostname === 'zhihu.com') && segments[0] === 'answer') {
+      type = 'answer';
+      id = segments[1];
+    } else if ((parsed.hostname === 'zhuanlan.zhihu.com' || parsed.hostname === 'www.zhihu.com') && segments[0] === 'p') {
+      type = 'article';
+      id = segments[1];
+    } else if (parsed.hostname === 'www.zhihu.com' && segments[0] === 'appview' && segments[1] === 'p') {
+      type = 'article';
+      id = segments[2];
+    }
+    if (!type || !/^\d+$/.test(id ?? '')) return null;
+    return {
+      type,
+      id,
+      url: `https://www.zhihu.com/api/v4/${type === 'answer' ? 'answers' : 'articles'}/${id}`,
+      include: type === 'answer' ? ZHIHU_ANSWER_INCLUDE : ZHIHU_ARTICLE_INCLUDE,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function visibleResponseText(body) {
   const raw = value(body);
   if (!/<[a-z][\s\S]*>/i.test(raw)) return raw;
@@ -231,9 +274,36 @@ export function parseDocument(input = {}) {
   };
 }
 
-export async function importUrl(url, { fetchHtml } = {}) {
+export async function importZhihuContent(url, { fetchJson } = {}) {
   const normalized = normalizeUrl(value(url));
   if (!isAllowedZhihuUrl(normalized)) return failureResult(IMPORT_STATUS.UNSUPPORTED_SOURCE, 'unsupported_zhihu_url');
+  const request = zhihuContentDetailRequest(normalized);
+  if (!request) return { ...failureResult(IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized };
+  if (typeof fetchJson !== 'function') throw new TypeError('fetchJson is required for Zhihu content detail import');
+
+  let response;
+  try {
+    response = await fetchJson(request.url, request.include);
+  } catch {
+    return { ...failureResult(IMPORT_STATUS.HTTP_ERROR), source: 'zhihu', externalId: normalized, url: normalized };
+  }
+  const status = classifyFailure({ status: Number(response?.status), body: response?.marker ?? '' });
+  if (status) return { ...failureResult(status), source: 'zhihu', externalId: normalized, url: normalized };
+
+  const payload = response?.payload && typeof response.payload === 'object' ? response.payload : null;
+  const content = typeof payload?.content === 'string' ? payload.content : typeof payload?.editable_content === 'string' ? payload.editable_content : '';
+  if (!content.trim()) return { ...failureResult(IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized };
+  const title = value(payload?.title) || value(payload?.question?.title);
+  const author = value(payload?.author?.name) || value(payload?.question?.author?.name);
+  const publishedAt = detailDate(payload?.created_time ?? payload?.createdTime);
+  const parsed = parseDocument({ kind: 'html', content, source: 'zhihu', externalId: normalized, url: normalized, title, author, publishedAt, fetchedAt: response?.fetchedAt });
+  return parsed.ok ? parsed : { ...parsed, source: 'zhihu', externalId: normalized, url: normalized };
+}
+
+export async function importUrl(url, { fetchHtml, fetchJson } = {}) {
+  const normalized = normalizeUrl(value(url));
+  if (!isAllowedZhihuUrl(normalized)) return failureResult(IMPORT_STATUS.UNSUPPORTED_SOURCE, 'unsupported_zhihu_url');
+  if (typeof fetchJson === 'function') return importZhihuContent(normalized, { fetchJson });
   if (typeof fetchHtml !== 'function') throw new TypeError('fetchHtml is required for user-authorized URL import');
   let response;
   try {

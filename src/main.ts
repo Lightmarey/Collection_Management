@@ -98,6 +98,7 @@ type RemoteJsonResponse = {
   status: number;
   payload: unknown | null;
   marker: 'captcha' | 'unavailable' | 'none';
+  fetchedAt: string;
 };
 
 type RemoteHtmlResponse = {
@@ -106,10 +107,12 @@ type RemoteHtmlResponse = {
   fetchedAt: string;
 };
 
-async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: string): Promise<RemoteJsonResponse> {
+async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: string, include = ''): Promise<RemoteJsonResponse> {
+  const requestUrl = new URL(url);
+  if (include) requestUrl.searchParams.set('include', include);
   const script = `
     (async () => {
-      const response = await fetch(${JSON.stringify(url)}, {
+      const response = await fetch(${JSON.stringify(requestUrl.href)}, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(${ZHIHU_REQUEST_TIMEOUT_MS}),
@@ -124,16 +127,16 @@ async function fetchJsonInRemoteSession(contents: Electron.WebContents, url: str
         : /付费|盐选|无权限|permission|forbidden/i.test(markerSource)
           ? 'unavailable'
           : 'none';
-      return { status: response.status, payload: response.ok ? payload : null, marker };
+      return { status: response.status, payload: response.ok ? payload : null, marker, fetchedAt: new Date().toISOString() };
     })()
   `;
   try {
     return await Promise.race([
       contents.executeJavaScript(script, true) as Promise<RemoteJsonResponse>,
-      new Promise<RemoteJsonResponse>((resolve) => setTimeout(() => resolve({ status: 599, payload: null, marker: 'none' }), ZHIHU_REQUEST_TIMEOUT_MS)),
+      new Promise<RemoteJsonResponse>((resolve) => setTimeout(() => resolve({ status: 599, payload: null, marker: 'none', fetchedAt: new Date().toISOString() }), ZHIHU_REQUEST_TIMEOUT_MS)),
     ]);
   } catch {
-    return { status: 599, payload: null, marker: 'none' };
+    return { status: 599, payload: null, marker: 'none', fetchedAt: new Date().toISOString() };
   }
 }
 
@@ -281,10 +284,10 @@ async function importSyncItem(jobId: string, sourceId: string, item: SyncItem, p
   }
 
   const result = await importUrl(item.url, {
-    fetchHtml: async (targetUrl) => {
+    fetchJson: async (targetUrl, include) => {
       if (!(await waitForSync(jobId))) return { status: 499, body: '', fetchedAt: new Date().toISOString() };
       await recordSyncRequest(jobId, 'document');
-      return fetchHtmlInRemoteSession(window.webContents, targetUrl);
+      return fetchJsonInRemoteSession(window.webContents, targetUrl, include);
     },
   });
   if (result.ok && result.document) {

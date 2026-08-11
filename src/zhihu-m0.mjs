@@ -59,10 +59,14 @@ export function normalizeCollectionPage(payload) {
     }
     const rawContent = item.content_html ?? item.body ?? (typeof item.content === "string" ? item.content : null)
       ?? content?.content_html ?? content?.content ?? content?.excerpt ?? content?.detailsText ?? "";
+    const itemUrl = item.url ?? content.url;
+    const allowedUrl = typeof itemUrl === "string" && /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(itemUrl)
+      ? itemUrl
+      : null;
     return {
       externalId: String(externalId),
       kind: String(item.type ?? content?.type ?? "unknown"),
-      url: typeof (item.url ?? content?.url) === "string" && (item.url ?? content?.url).startsWith("https://www.zhihu.com/") ? (item.url ?? content?.url) : null,
+      url: allowedUrl,
       titleHash: sha256(item.title ?? content?.title ?? content?.question?.title ?? ""),
       contentHash: rawContent ? sha256(rawContent) : null,
       status: item.is_locked || item.is_paid || content?.is_locked || content?.is_paid ? FAILURE_TYPES.UNAVAILABLE : "ok",

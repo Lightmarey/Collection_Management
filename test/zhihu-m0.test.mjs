@@ -56,6 +56,12 @@ test("hashes string content in nested collection items without retaining it", ()
   assert.ok(!JSON.stringify(result).includes("SAMPLE_BODY"));
 });
 
+test("keeps zhuanlan article URLs from collection items", () => {
+  const result = normalizeCollectionPage({ data: [{ id: "article-1", type: "article", url: "https://zhuanlan.zhihu.com/p/123", title: "[TITLE]" }] });
+  assert.equal(result.status, "ok");
+  assert.equal(result.items[0].url, "https://zhuanlan.zhihu.com/p/123");
+});
+
 test("runs the capture flow through every collection page", async () => {
   const calls = [];
   const result = await captureCollection("https://www.zhihu.com/collection/123", {

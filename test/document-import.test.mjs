@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importUrl, parseDocument } from '../src/document-import.mjs';
+import { importUrl, parseDocument, zhihuContentDetailRequest } from '../src/document-import.mjs';
 import { openKnowledgeDatabase } from '../src/database.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -43,6 +43,41 @@ test('classifies user-authorized URL failures and structure changes', async () =
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '<html><body><article><p>Answer</p></article></body></html>') })).status, 'ok');
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2?page=2', { fetchHtml: fetchHtml(200, '<html></html>') })).status, 'structure_changed');
   assert.equal((await importUrl('http://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '') })).status, 'unsupported_source');
+});
+
+test('reads Zhihu answers and articles through the verified content detail API shape', async () => {
+  const answerRequest = zhihuContentDetailRequest('https://www.zhihu.com/question/1/answer/2');
+  assert.equal(answerRequest.url, 'https://www.zhihu.com/api/v4/answers/2');
+  assert.match(answerRequest.include, /content/);
+  const answer = await importUrl('https://www.zhihu.com/question/1/answer/2', {
+    fetchJson: async (url, include) => {
+      assert.equal(url, answerRequest.url);
+      assert.equal(include, answerRequest.include);
+      return { status: 200, marker: 'none', fetchedAt: '2026-08-11T00:00:00.000Z', payload: {
+        title: 'Question title',
+        author: { name: 'Author' },
+        created_time: 1_754_880_000,
+        content: '<p>Full answer body</p><img src="https://p1.zhimg.com/a.png">',
+      } };
+    },
+  });
+  assert.equal(answer.status, 'ok');
+  assert.equal(answer.document.title, 'Question title');
+  assert.equal(answer.document.author, 'Author');
+  assert.match(answer.document.body, /Full answer body/);
+
+  const articleRequest = zhihuContentDetailRequest('https://zhuanlan.zhihu.com/p/123');
+  assert.deepEqual(articleRequest, {
+    type: 'article',
+    id: '123',
+    url: 'https://www.zhihu.com/api/v4/articles/123',
+    include: articleRequest.include,
+  });
+  const article = await importUrl('https://zhuanlan.zhihu.com/p/123', {
+    fetchJson: async () => ({ status: 200, marker: 'none', payload: { title: 'Article title', content: '<p>Full article body</p>' } }),
+  });
+  assert.equal(article.status, 'ok');
+  assert.equal(article.document.title, 'Article title');
 });
 
 test('records import metadata and errors without replacing the current version', () => {

@@ -18,6 +18,15 @@ function failureType(value) {
   return typeof value === 'string' && value ? value : FAILURE_TYPES.HTTP_ERROR;
 }
 
+function skipPending(states, reason) {
+  for (const state of states) {
+    if (state.status !== 'pending') continue;
+    state.status = 'skipped';
+    state.skipped = true;
+    state.failureType = reason ?? null;
+  }
+}
+
 export function syncItemHash(item = {}) {
   return createHash('sha256').update(JSON.stringify({
     externalId: item.externalId ?? null,
@@ -64,6 +73,7 @@ export async function runCollectionSync({
 
   report({ phase: 'discovered' });
   if (!captured?.ok) {
+    skipPending(states, failureType(captured?.failureType));
     return {
       status: captured?.failureType === FAILURE_TYPES.STOPPED ? SYNC_STATUS.CANCELLED : SYNC_STATUS.STOPPED,
       failureType: failureType(captured?.failureType),
@@ -77,6 +87,7 @@ export async function runCollectionSync({
     const state = states[index];
     if (state.status !== 'pending') continue;
     if (!(await waitUntilReady())) {
+      skipPending(states, FAILURE_TYPES.STOPPED);
       return { status: SYNC_STATUS.CANCELLED, failureType: FAILURE_TYPES.STOPPED, items: states, progress: progress(), capture: captured };
     }
 
@@ -106,6 +117,7 @@ export async function runCollectionSync({
     report({ phase: 'item', currentExternalId: state.externalId });
 
     if (state.failureType && SAFE_STOP_FAILURES.has(state.failureType)) {
+      skipPending(states, state.failureType);
       return { status: SYNC_STATUS.STOPPED, failureType: state.failureType, items: states, progress: progress(), capture: captured };
     }
   }
