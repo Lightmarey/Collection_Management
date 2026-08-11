@@ -51,8 +51,8 @@ function syncFailureLabel(error: string | null | undefined) {
   return {
     login_expired: '登录已失效，请重新登录知乎。',
     rate_limited: '请求过于频繁，请稍后再试。',
-    captcha: '知乎要求完成安全验证，请在登录窗口中处理。',
-    paid_or_no_permission: '内容无权限或属于付费内容，已跳过。',
+    captcha: '该条内容触发了知乎安全验证响应（不一定会弹出窗口），已跳过；稍后可重试。',
+    paid_or_no_permission: '该条内容无权限或属于付费内容，无法通过重试导入。',
     structure_changed: '知乎返回结构发生变化，已停止同步。',
     http_error: '网络请求失败，请检查网络后重试。',
     stopped: '同步已停止。',

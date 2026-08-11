@@ -38,6 +38,8 @@ test('classifies user-authorized URL failures and structure changes', async () =
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(401, '') })).status, 'login_expired');
   assert.equal((await importUrl('https://zhuanlan.zhihu.com/p/1', { fetchHtml: fetchHtml(429, '') })).status, 'rate_limited');
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(403, '付费内容') })).status, 'paid_or_no_permission');
+  assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '<html><body><article><p>Answer</p></article><script>const message = "安全验证";</script></body></html>') })).status, 'ok');
+  assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '<html><body><div>安全验证</div></body></html>') })).status, 'captcha');
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '<html><body><article><p>Answer</p></article></body></html>') })).status, 'ok');
   assert.equal((await importUrl('https://www.zhihu.com/question/1/answer/2?page=2', { fetchHtml: fetchHtml(200, '<html></html>') })).status, 'structure_changed');
   assert.equal((await importUrl('http://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '') })).status, 'unsupported_source');

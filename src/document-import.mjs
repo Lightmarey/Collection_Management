@@ -185,8 +185,18 @@ function failureResult(status, error = status) {
   return { ok: false, status, error };
 }
 
+function visibleResponseText(body) {
+  const raw = value(body);
+  if (!/<[a-z][\s\S]*>/i.test(raw)) return raw;
+  const dom = new JSDOM(raw);
+  for (const element of dom.window.document.querySelectorAll('script, style, noscript, template')) element.remove();
+  const textContent = dom.window.document.body?.textContent || '';
+  dom.window.close();
+  return textContent;
+}
+
 function classifyImportFailure(status, body = '') {
-  const textBody = value(body);
+  const textBody = visibleResponseText(body);
   if (/captcha|安全验证|人机验证/i.test(textBody)) return IMPORT_STATUS.CAPTCHA;
   if (/付费|盐选|无权限|permission|forbidden/i.test(textBody)) return IMPORT_STATUS.PAID_OR_NO_PERMISSION;
   return classifyFailure({ status, body: textBody }) || (status >= 400 ? IMPORT_STATUS.HTTP_ERROR : null);
