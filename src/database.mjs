@@ -759,7 +759,7 @@ export class KnowledgeDatabase {
           SELECT id FROM documents
           WHERE id = ? OR (source = ? AND (external_id = ? OR url = ?))
         ) AND collection_id IN (
-          SELECT id FROM collections WHERE source = ? AND external_id = ?
+          SELECT id FROM collections WHERE (source = ? OR source LIKE ?) AND external_id = ?
         )
       `,
         )
@@ -769,6 +769,7 @@ export class KnowledgeDatabase {
           identifier,
           identifier,
           text(source).trim(),
+          `${text(source).trim()}:%`,
           text(sourceId).trim(),
         ).changes;
     } catch (error) {

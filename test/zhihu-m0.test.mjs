@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyFailure, FAILURE_TYPES, membershipRemovalResult, normalizeCollectionPage, redact, safeLogEvent, zhihuContentId } from "../src/zhihu-m0.mjs";
+import { classifyFailure, FAILURE_TYPES, membershipRemovalRequest, membershipRemovalResult, normalizeCollectionPage, redact, safeLogEvent, zhihuContentId } from "../src/zhihu-m0.mjs";
 import { captureCollection, captureSource, sourceTarget } from "../src/zhihu-capture.mjs";
 
 const fixture = {
@@ -24,6 +24,16 @@ test("ambiguous remote removal never succeeds without confirming absence", () =>
   assert.deepEqual(membershipRemovalResult(404), { ok: false, error: "remote_state_unknown" });
   assert.deepEqual(membershipRemovalResult(599, true), { ok: false, error: "remote_membership_still_present" });
   assert.deepEqual(membershipRemovalResult(599, false), { ok: true, verifiedAbsent: true });
+});
+
+test("builds the Zhihu collection removal PUT request", () => {
+  assert.deepEqual(membershipRemovalRequest("412785244", "987654321", "answer"), {
+    url: "https://api.zhihu.com/collections/contents/answer/987654321",
+    method: "PUT",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "remove_collections=412785244",
+  });
+  assert.throws(() => membershipRemovalRequest("not-an-id", "987654321", "answer"), /invalid/);
 });
 
 test("normalizes twenty-item fixture without retaining content or page tokens", () => {

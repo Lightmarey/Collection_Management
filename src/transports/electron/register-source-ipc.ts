@@ -307,7 +307,10 @@ export function registerSourceIpc(options: {
         return { ok: false, error: "database_unavailable" };
       try {
         return await sync.removeDocumentMemberships(documentId);
-      } catch {
+      } catch (error) {
+        log("remote-cleanup-failed", {
+          code: error instanceof Error ? error.message : "unknown",
+        });
         return { ok: false, error: "remote_cleanup_failed" };
       }
     },

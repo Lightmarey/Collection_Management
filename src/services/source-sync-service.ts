@@ -292,32 +292,14 @@ export class SourceSyncService {
       }
 
       if (cleanupApproved && this.active?.state === 'running') {
-        let writable = new Set<string>();
-        if (this.adapter.discoverSources && await this.beforeRequest(jobId, 'remote-permission-check') && await this.adapter.verifySession() === true) {
-          const discovered = await this.adapter.discoverSources();
-          writable = new Set(discovered.filter((source) => source.writable && source.kind === 'collection').map((source) => source.id));
-        }
-        const permissionsValid = cleanupQueue.every(({ target }) => writable.has(target.id));
-        if (!permissionsValid) {
-          const live = this.getJob(jobId);
-          const cleanup = live.payload.remoteCleanup ?? { planned: cleanupQueue.length, completed: 0, failed: 0, errors: [] };
-          this.database.updateSyncJob(jobId, { payloadPatch: {
-            remoteCleanup: {
-              ...cleanup,
-              awaitingConfirmation: false,
-              blockedReason: 'remote_permission_check_failed',
-              failed: cleanup.failed + cleanupQueue.length,
-              errors: [...cleanup.errors, ...cleanupQueue.map(({ item }) => ({ externalId: item.externalId, error: 'remote_permission_check_failed' }))],
-            },
-          } });
-        } else for (const { target, item } of cleanupQueue) {
+        for (const { target, item } of cleanupQueue) {
           if (!(await this.beforeRequest(jobId, 'remote-cleanup'))) break;
           let removal: { ok: boolean; error?: string };
           try { removal = await this.adapter.removeMembership!(target, item); }
           catch { removal = { ok: false, error: 'remote_state_unknown' }; }
           let cleanupError = removal.error;
           if (removal.ok) {
-            try { this.database.unlinkCollectionDocument(target.source, target.id, item.documentId ?? item.externalId); }
+            try { this.database.unlinkCollectionDocument(this.adapter.id, target.id, item.documentId ?? item.externalId); }
             catch { cleanupError = 'local_membership_update_failed'; }
           }
           const live = this.getJob(jobId);

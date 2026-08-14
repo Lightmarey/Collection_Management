@@ -31,6 +31,17 @@ export function membershipRemovalResult(status, membershipPresent = null) {
   return { ok: false, error: `http_${status}` };
 }
 
+export function membershipRemovalRequest(collectionId, contentId, contentType) {
+  if (!/^\d+$/.test(String(collectionId)) || !/^\d+$/.test(String(contentId))) throw new TypeError("invalid Zhihu membership id");
+  const type = contentType === "article" ? "article" : "answer";
+  return {
+    url: `https://api.zhihu.com/collections/contents/${type}/${contentId}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `remove_collections=${encodeURIComponent(collectionId)}`,
+  };
+}
+
 function sha256(value) {
   return createHash("sha256").update(String(value)).digest("hex");
 }

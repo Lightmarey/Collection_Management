@@ -482,7 +482,7 @@ test("tracks and removes a document's remote collection memberships", () => {
     url: documentUrl,
   });
   const collection = database.upsertCollection({
-    source: "zhihu",
+    source: "zhihu:collection",
     externalId: "99",
     name: "owned",
   });

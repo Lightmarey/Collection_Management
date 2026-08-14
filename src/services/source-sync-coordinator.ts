@@ -119,28 +119,11 @@ export class SourceSyncCoordinator {
     }>;
     if (!memberships.length)
       return { ok: false as const, error: "remote_membership_not_found" };
-    const adapter = this.sources.get(memberships[0].source);
-    if (!adapter.removeMembership || !adapter.discoverSources)
+    const adapter = this.sources.get(memberships[0].documentSource);
+    if (!adapter.removeMembership)
       return { ok: false as const, error: "remote_cleanup_unsupported" };
-    let discovered;
-    try {
-      discovered = await adapter.discoverSources();
-    } catch {
-      return {
-        ok: false as const,
-        error: "remote_permission_check_failed",
-        completed: 0,
-        failed: memberships.length,
-      };
-    }
-    const writable = new Set(
-      discovered
-        .filter((source) => source.writable && source.kind === "collection")
-        .map((source) => source.id),
-    );
     const targets = memberships.filter(
-      (membership) =>
-        membership.source === adapter.id && writable.has(membership.sourceId),
+      (membership) => membership.documentSource === adapter.id,
     );
     if (!targets.length)
       return { ok: false as const, error: "remote_membership_not_writable" };
@@ -174,7 +157,7 @@ export class SourceSyncCoordinator {
       if (result.ok) {
         try {
           this.store.unlinkCollectionDocument(
-            membership.source,
+            adapter.id,
             membership.sourceId,
             documentId,
           );

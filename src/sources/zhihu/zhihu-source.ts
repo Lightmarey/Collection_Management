@@ -1,7 +1,7 @@
 import { BrowserWindow, session } from 'electron';
 import { captureCollection, captureSource, sourceTarget } from '../../zhihu-capture.mjs';
 import { importUrl, type ParsedDocument } from '../../document-import.mjs';
-import { classifyFailure, FAILURE_TYPES, membershipRemovalResult, zhihuContentId } from '../../zhihu-m0.mjs';
+import { classifyFailure, FAILURE_TYPES, membershipRemovalRequest, membershipRemovalResult, zhihuContentId } from '../../zhihu-m0.mjs';
 import { signZhihuRequest } from '../../zhihu-signature.mjs';
 import { isAllowedZhihuAssetUrl, isAllowedZhihuUrl } from '../../security.mjs';
 import type { CaptureResult, DiscoveredSource, SourceAdapter, SourceDescriptor, SourceResponse } from '../source-adapter';
@@ -112,7 +112,7 @@ export class ZhihuSource implements SourceAdapter {
     return { partition: this.partition, cookieCount: cookies.length, authenticated: await this.verifySession() === true };
   }
 
-  private async executeJsonFetch(requestUrl: string, headers: Record<string, string> = {}, method = 'GET'): Promise<SourceResponse> {
+  private async executeJsonFetch(requestUrl: string, headers: Record<string, string> = {}, method = 'GET', body?: string): Promise<SourceResponse> {
     const contents = this.remoteWindow().webContents;
     const responseKey = `__kmZhihuContent_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = `
@@ -121,6 +121,7 @@ export class ZhihuSource implements SourceAdapter {
           method: ${JSON.stringify(method)},
           credentials: 'include',
           headers: ${JSON.stringify({ Accept: 'application/json', ...headers })},
+          ${body === undefined ? '' : `body: ${JSON.stringify(body)},`}
           signal: AbortSignal.timeout(${REQUEST_TIMEOUT_MS}),
         });
         const responseText = await response.text().catch(() => '');
@@ -200,12 +201,10 @@ export class ZhihuSource implements SourceAdapter {
 
   private async signedRequest(url: string, method = 'GET') {
     const requestUrl = new URL(url);
-    const cookies = await this.configureSession().cookies.get({ url: 'https://www.zhihu.com/' });
+    const cookies = await this.configureSession().cookies.get({ url: 'https://www.zhihu.com/', name: 'd_c0' });
     const dC0 = cookies.find((cookie) => cookie.name === 'd_c0')?.value;
     if (!dC0) return { status: 401, payload: null, marker: FAILURE_TYPES.LOGIN_EXPIRED, fetchedAt: new Date().toISOString() } satisfies SourceResponse;
-    const xsrfToken = method === 'GET' ? undefined : cookies.find((cookie) => cookie.name === '_xsrf')?.value;
-    if (method !== 'GET' && !xsrfToken) return { status: 403, payload: null, marker: FAILURE_TYPES.HTTP_ERROR, fetchedAt: new Date().toISOString() } satisfies SourceResponse;
-    return this.executeJsonFetch(requestUrl.href, signZhihuRequest(requestUrl.href, dC0, xsrfToken), method);
+    return this.executeJsonFetch(requestUrl.href, signZhihuRequest(requestUrl.href, dC0), method);
   }
 
   async discoverSources(): Promise<DiscoveredSource[]> {
@@ -240,13 +239,12 @@ export class ZhihuSource implements SourceAdapter {
   }
 
   async removeMembership(source: SourceDescriptor, item: import('../../contracts/domain').SyncItem) {
-    if (source.kind !== 'collection' || !this.ownedCollections.has(source.id) || !item.externalId) return { ok: false, error: 'remote_cleanup_unsupported' };
+    if (source.kind !== 'collection' || !item.externalId) return { ok: false, error: 'remote_cleanup_unsupported' };
     const contentType = item.kind === 'article' ? 'article' : 'answer';
     const contentId = zhihuContentId(item);
     if (!contentId) return { ok: false, error: 'remote_cleanup_unsupported' };
-    const url = new URL(`https://www.zhihu.com/api/v4/collections/${encodeURIComponent(source.id)}/contents/${contentId}`);
-    url.searchParams.set('content_type', contentType);
-    const response = await this.signedRequest(url.href, 'DELETE');
+    const request = membershipRemovalRequest(source.id, contentId, contentType);
+    const response = await this.executeJsonFetch(request.url, request.headers, request.method, request.body);
     if (response.status >= 200 && response.status < 300) return membershipRemovalResult(response.status);
     if (response.status !== 404 && response.status !== 599) return membershipRemovalResult(response.status);
     const captured = await captureCollection(source.pageUrl, { fetchJson: (targetUrl: string) => this.fetchJson(targetUrl) });

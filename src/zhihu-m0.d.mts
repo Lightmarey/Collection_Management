@@ -11,6 +11,17 @@ export function membershipRemovalResult(
   membershipPresent?: boolean | null,
 ): { ok: boolean; error?: string; verifiedAbsent?: boolean };
 
+export function membershipRemovalRequest(
+  collectionId: string,
+  contentId: string,
+  contentType: "answer" | "article",
+): {
+  url: string;
+  method: "PUT";
+  headers: { "Content-Type": "application/x-www-form-urlencoded" };
+  body: string;
+};
+
 export function classifyFailure(input?: { status?: number; body?: unknown }): string | null;
 
 export function normalizeCollectionPage(payload: unknown): {
