@@ -781,32 +781,23 @@ function App() {
     if (reader && selectedIds.has(reader.id)) refreshReader();
   }
 
-  async function editDocumentTags(item: ReaderListItem) {
-    const value = window.prompt(
-      "编辑标签（使用逗号分隔）",
-      item.tagNames.join(", "),
-    );
-    if (value === null) return;
-    const tags = [
-      ...new Set(
-        value
-          .split(/[,，]/)
-          .map((name) => name.trim())
-          .filter(Boolean),
-      ),
-    ];
+  async function editDocumentTags(item: ReaderListItem, tags: string[]) {
     const result = await readerClient.updateDocumentProperties({
       documentId: item.id,
       tags,
     });
-    if (!result.ok)
-      return setStatus(`更新标签失败：${result.error ?? "unknown"}`);
+    if (!result.ok) {
+      setStatus(`更新标签失败：${result.error ?? "unknown"}`);
+      return false;
+    }
     setDocuments((current) =>
       current.map((document) =>
         document.id === item.id ? { ...document, tagNames: tags } : document,
       ),
     );
+    void loadList(item.id, true);
     if (reader?.id === item.id) refreshReader();
+    return true;
   }
 
   async function batchRemove(action: "trash" | "restore" | "delete") {
@@ -2525,12 +2516,27 @@ function DocumentTable({
   selectedId: string | null;
   selectedIds: Set<string>;
   select(item: ReaderListItem, event: React.MouseEvent): void;
-  editTags(item: ReaderListItem): void;
+  editTags(item: ReaderListItem, tags: string[]): Promise<boolean>;
   save(
     item: ReaderListItem,
     patch: { tier?: string; favorite?: boolean },
   ): void;
 }) {
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null);
+  const [tagValue, setTagValue] = useState("");
+
+  async function saveTags(item: ReaderListItem) {
+    const tags = [
+      ...new Set(
+        tagValue
+          .split(/[,，]/)
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (await editTags(item, tags)) setEditingTagsId(null);
+  }
+
   return (
     <table className="document-table">
       <thead>
@@ -2563,21 +2569,53 @@ function DocumentTable({
                 ))}
               </select>
             </td>
-            <td className="document-tags-cell">
-              <button
-                className="document-tags-button"
-                aria-label={`编辑 ${item.title || "无标题内容"} 的标签`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  editTags(item);
-                }}
-              >
-                {item.tagNames.length ? (
-                  item.tagNames.map((tag) => <span key={tag}>#{tag}</span>)
-                ) : (
-                  <span className="empty">+ 添加标签</span>
-                )}
-              </button>
+            <td
+              className="document-tags-cell"
+              role={editingTagsId === item.id ? undefined : "button"}
+              tabIndex={editingTagsId === item.id ? undefined : 0}
+              aria-label={`编辑 ${item.title || "无标题内容"} 的标签`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (editingTagsId === item.id) return;
+                setTagValue(item.tagNames.join(", "));
+                setEditingTagsId(item.id);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || editingTagsId === item.id) return;
+                event.stopPropagation();
+                setTagValue(item.tagNames.join(", "));
+                setEditingTagsId(item.id);
+              }}
+            >
+              {editingTagsId === item.id ? (
+                <div className="document-tags-editor">
+                  <input
+                    autoFocus
+                    value={tagValue}
+                    placeholder="逗号分隔标签"
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => setTagValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === "Enter") void saveTags(item);
+                      if (event.key === "Escape") setEditingTagsId(null);
+                    }}
+                  />
+                  <button
+                    aria-label="保存标签"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void saveTags(item);
+                    }}
+                  >
+                    <Check size={14} />
+                  </button>
+                </div>
+              ) : item.tagNames.length ? (
+                item.tagNames.map((tag) => <span key={tag}>#{tag}</span>)
+              ) : (
+                <span className="empty">+ 添加标签</span>
+              )}
             </td>
             <td>
               <button

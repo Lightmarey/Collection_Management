@@ -584,20 +584,41 @@ button {
   margin-right: 5px;
   color: color-mix(in srgb, var(--accent-color) 72%, var(--text-color));
 }
-.document-tags-button {
-  display: flex;
-  width: 100%;
-  min-height: 24px;
-  flex-wrap: wrap;
-  align-items: center;
-  padding: 2px 0;
-  text-align: left;
+.document-tags-cell {
+  height: 42px;
+  cursor: pointer;
+  vertical-align: middle;
 }
-.document-tags-button .empty {
+.document-tags-cell .empty {
   color: var(--muted-color);
 }
-.document-tags-button:hover span {
+.document-tags-cell:hover > span {
   color: var(--accent-color);
+}
+.document-tags-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.document-tags-editor input {
+  width: min(180px, 100%);
+  min-width: 80px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--selected-border);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text-color);
+  outline: 0;
+}
+.document-tags-editor button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--accent-color);
+  color: #fff;
 }
 .document-table select,
 .document-table button {
