@@ -1,8 +1,9 @@
 {
   "name": "knowledge-management",
   "version": "0.1.0",
-  "description": "Local-first knowledge capture and reading application",
+  "description": "Local-first bookmark manager and reader",
   "author": "Knowledge Management contributors",
+  "license": "AGPL-3.0-only",
   "private": true,
   "main": ".vite/build/main.js",
   "scripts": {
