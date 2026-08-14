@@ -1,0 +1,274 @@
+.app[data-theme="dark"] {
+  --surface: #242629;
+  --surface-soft: #292c30;
+  --surface-hover: #34383d;
+  --surface-raised: #2d3034;
+  --border-color: #41454b;
+  --text-color: #d7dce2;
+  --muted-color: #9ca5af;
+  --soft-shadow: #0006;
+  color-scheme: dark;
+  color: #d7dce2;
+  background: #1f2124;
+}
+
+.app[data-theme="dark"]
+  :is(
+    .titlebar,
+    .panel,
+    .list-pane,
+    .content-pane,
+    .reader-pane,
+    .detail-side,
+    .modal
+  ) {
+  background: #242629;
+  color: #d7dce2;
+}
+
+.app[data-theme="dark"] :is(.nav-pane, .toc-pane) {
+  background: #202225;
+}
+
+.app[data-theme="dark"] :is(.library-layout, .detail-layout, .resize-handle) {
+  background: #34373b;
+}
+
+.app[data-theme="dark"]
+  :is(
+    .document-card,
+    .content-tabs,
+    .list-count,
+    .modal > header,
+    .tabs,
+    .property-actions
+  ) {
+  border-color: #393c41;
+}
+
+.app[data-theme="dark"]
+  :is(
+    .document-card:hover,
+    .document-card.selected,
+    .nav-section button:hover,
+    .nav-section button.active,
+    .nav-bottom button:hover,
+    .nav-bottom button.active
+  ) {
+  background: #30343a;
+}
+
+.app[data-theme="dark"]
+  :is(
+    .reader-content > h1,
+    .article-body,
+    .article-body h1,
+    .article-body h2,
+    .article-body h3,
+    .properties h2,
+    .list-toolbar h1,
+    .card-copy > b
+  ) {
+  color: #d7dce2;
+}
+
+.app[data-theme="dark"]
+  :is(
+    button,
+    input,
+    select,
+    textarea,
+    .global-search,
+    .sync-mini,
+    .annotation-note-editor
+  ) {
+  border-color: #454950;
+}
+
+.app[data-theme="dark"]
+  :is(
+    .global-search,
+    input,
+    select,
+    textarea,
+    .sync-mini,
+    .annotation-note-editor
+  ) {
+  background: #2b2e32;
+  color: #d7dce2;
+}
+
+.app[data-theme="dark"] .resize-handle:hover,
+.app[data-theme="dark"] .resize-handle:active {
+  background: #5b9df0;
+}
+
+.app[data-theme="dark"] .modal > header,
+.app[data-theme="dark"] .drop-zone,
+.app[data-theme="dark"]
+  :is(
+    .account-row button,
+    .public-source button,
+    .modal-actions .secondary,
+    .bulk-actions button,
+    .bulk-actions select
+  ) {
+  border-color: #454950;
+  background: #2b2e32;
+  color: #d7dce2;
+}
+.app[data-theme="dark"]
+  :is(.source-options, .source-options label, .bulk-actions) {
+  border-color: #454950;
+}
+.app[data-theme="dark"]
+  :is(
+    .source-options label.selected,
+    .bulk-actions,
+    .document-card.multi-selected,
+    .document-table tr.multi-selected
+  ) {
+  background: #26364a;
+}
+.app[data-theme="dark"] .drop-zone {
+  color: #aab2bb;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app[data-theme="system"] {
+    --surface: #242629;
+    --surface-soft: #292c30;
+    --surface-hover: #34383d;
+    --surface-raised: #2d3034;
+    --border-color: #41454b;
+    --text-color: #d7dce2;
+    --muted-color: #9ca5af;
+    --soft-shadow: #0006;
+    color-scheme: dark;
+    color: #d7dce2;
+    background: #1f2124;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      .titlebar,
+      .panel,
+      .list-pane,
+      .content-pane,
+      .reader-pane,
+      .detail-side,
+      .modal
+    ) {
+    background: #242629;
+    color: #d7dce2;
+  }
+
+  .app[data-theme="system"] :is(.nav-pane, .toc-pane) {
+    background: #202225;
+  }
+
+  .app[data-theme="system"]
+    :is(.library-layout, .detail-layout, .resize-handle) {
+    background: #34373b;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      .document-card,
+      .content-tabs,
+      .list-count,
+      .modal > header,
+      .tabs,
+      .property-actions
+    ) {
+    border-color: #393c41;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      .document-card:hover,
+      .document-card.selected,
+      .nav-section button:hover,
+      .nav-section button.active,
+      .nav-bottom button:hover,
+      .nav-bottom button.active
+    ) {
+    background: #30343a;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      .reader-content > h1,
+      .article-body,
+      .article-body h1,
+      .article-body h2,
+      .article-body h3,
+      .properties h2,
+      .list-toolbar h1,
+      .card-copy > b
+    ) {
+    color: #d7dce2;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      button,
+      input,
+      select,
+      textarea,
+      .global-search,
+      .sync-mini,
+      .annotation-note-editor
+    ) {
+    border-color: #454950;
+  }
+
+  .app[data-theme="system"]
+    :is(
+      .global-search,
+      input,
+      select,
+      textarea,
+      .sync-mini,
+      .annotation-note-editor
+    ) {
+    background: #2b2e32;
+    color: #d7dce2;
+  }
+
+  .app[data-theme="system"] .resize-handle:hover,
+  .app[data-theme="system"] .resize-handle:active {
+    background: #5b9df0;
+  }
+
+  .app[data-theme="system"] .modal > header,
+  .app[data-theme="system"] .drop-zone,
+  .app[data-theme="system"]
+    :is(
+      .account-row button,
+      .public-source button,
+      .modal-actions .secondary,
+      .bulk-actions button,
+      .bulk-actions select
+    ) {
+    border-color: #454950;
+    background: #2b2e32;
+    color: #d7dce2;
+  }
+  .app[data-theme="system"]
+    :is(.source-options, .source-options label, .bulk-actions) {
+    border-color: #454950;
+  }
+  .app[data-theme="system"]
+    :is(
+      .source-options label.selected,
+      .bulk-actions,
+      .document-card.multi-selected,
+      .document-table tr.multi-selected
+    ) {
+    background: #26364a;
+  }
+  .app[data-theme="system"] .drop-zone {
+    color: #aab2bb;
+  }
+}
