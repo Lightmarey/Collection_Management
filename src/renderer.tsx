@@ -1418,7 +1418,7 @@ function App() {
                 : english ? "Search your library" : "搜索本地知识"}
               disabled={workspace === "settings"}
             />
-            <kbd>Ctrl K</kbd>
+            <kbd>/</kbd>
           </label>
           <div className="title-actions">
             <button onClick={() => void openImport()}>
