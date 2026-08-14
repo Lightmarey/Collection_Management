@@ -1,15 +1,28 @@
 {
   "name": "knowledge-management",
   "version": "0.1.0",
+  "description": "Local-first knowledge capture and reading application",
+  "author": "Knowledge Management contributors",
   "private": true,
   "main": ".vite/build/main.js",
   "scripts": {
     "prestart": "node scripts/clean-vite.mjs",
     "start": "electron-forge start",
+    "prepackage": "node scripts/check-packaging-node.mjs",
     "package": "electron-forge package",
+    "premake": "node scripts/check-packaging-node.mjs",
     "make": "electron-forge make",
+    "postmake": "node scripts/verify-distribution.mjs all",
+    "premake:installer": "node scripts/check-packaging-node.mjs",
+    "make:installer": "electron-forge make --targets @electron-forge/maker-squirrel",
+    "postmake:installer": "node scripts/verify-distribution.mjs installer",
+    "premake:portable": "node scripts/check-packaging-node.mjs",
+    "make:portable": "electron-forge make --targets @electron-forge/maker-zip",
+    "postmake:portable": "node scripts/verify-distribution.mjs portable",
     "test": "node --test test/*.test.mjs",
     "test:zhihu-headless": "electron scripts/zhihu-headless-check.mjs",
+    "test:zhihu-chain": "electron scripts/zhihu-headless-check.mjs https://www.zhihu.com/collection/REDACTED_COLLECTION_ID --verify-incremental",
+    "test:zhihu-signature-live": "electron scripts/zhihu-signature-check.mjs",
     "test:smoke": "node scripts/electron-smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
@@ -18,6 +31,9 @@
     "better-sqlite3": "^13.0.3",
     "dompurify": "^3.4.13",
     "jsdom": "^30.0.1",
+    "katex": "^0.18.4",
+    "lucide-react": "^1.31.0",
+    "lxgw-wenkai-webfont": "^1.7.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -33,7 +49,7 @@
     "@types/react-dom": "^19.2.4",
     "electron": "^43.3.0",
     "typescript": "^5.8.3",
-    "vite": "^8.2.1"
+    "vite": "^7.3.6"
   },
   "overrides": {
     "@electron/rebuild": "^4.2.0"

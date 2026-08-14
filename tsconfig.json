@@ -12,5 +12,5 @@
     "esModuleInterop": true,
     "types": ["node", "@electron-forge/plugin-vite/forge-vite-env"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "forge.config.ts", "vite.*.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "forge.config.ts", "vite.*.config.mts"]
 }

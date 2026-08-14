@@ -6,16 +6,19 @@ import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
-  packagerConfig: { asar: true },
+  packagerConfig: {
+    asar: { unpack: '**/*.node' },
+    ignore: (file) => Boolean(file) && !file.startsWith('/.vite') && !file.startsWith('/node_modules'),
+  },
   rebuildConfig: {},
-  makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin'])],
+  makers: [new MakerSquirrel({}), new MakerZIP({}, ['win32', 'linux', 'darwin'])],
   plugins: [
     new VitePlugin({
       build: [
-        { entry: 'src/main.ts', config: 'vite.main.config.ts', target: 'main' },
-        { entry: 'src/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
+        { entry: 'src/main.ts', config: 'vite.main.config.mts', target: 'main' },
+        { entry: 'src/preload.ts', config: 'vite.preload.config.mts', target: 'preload' },
       ],
-      renderer: [{ name: 'main_window', config: 'vite.renderer.config.ts' }],
+      renderer: [{ name: 'main_window', config: 'vite.renderer.config.mts' }],
     }),
     new FusesPlugin({
       version: FuseVersion.V1,
