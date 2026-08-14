@@ -2538,25 +2538,24 @@ function DocumentTable({
   }
 
   return (
-    <table className="document-table">
-      <thead>
-        <tr>
-          <th>标题</th>
-          <th>层级</th>
-          <th>标签</th>
-          <th>收藏</th>
-          <th>更新时间</th>
-        </tr>
-      </thead>
-      <tbody>
+    <div className="document-table" role="table">
+      <div className="document-table-head" role="row">
+        <div role="columnheader">标题</div>
+        <div role="columnheader">层级</div>
+        <div role="columnheader">标签</div>
+        <div role="columnheader">收藏</div>
+        <div role="columnheader">更新时间</div>
+      </div>
+      <div className="document-table-body" role="rowgroup">
         {documents.map((item) => (
-          <tr
+          <div
             key={item.id}
+            role="row"
             className={`${selectedId === item.id ? "selected" : ""} ${selectedIds.has(item.id) ? "multi-selected" : ""}`}
             onClick={(event) => select(item, event)}
           >
-            <td>{item.title}</td>
-            <td>
+            <div role="cell">{item.title}</div>
+            <div role="cell">
               <select
                 value={item.tier}
                 onClick={(event) => event.stopPropagation()}
@@ -2568,8 +2567,8 @@ function DocumentTable({
                   </option>
                 ))}
               </select>
-            </td>
-            <td
+            </div>
+            <div
               className="document-tags-cell"
               role={editingTagsId === item.id ? undefined : "button"}
               tabIndex={editingTagsId === item.id ? undefined : 0}
@@ -2616,8 +2615,8 @@ function DocumentTable({
               ) : (
                 <span className="empty">+ 添加标签</span>
               )}
-            </td>
-            <td>
+            </div>
+            <div role="cell">
               <button
                 onClick={(event) => {
                   event.stopPropagation();
@@ -2629,12 +2628,12 @@ function DocumentTable({
                   fill={item.favorite ? "currentColor" : "none"}
                 />
               </button>
-            </td>
-            <td>{formatDate(item.fetchedAt)}</td>
-          </tr>
+            </div>
+            <div role="cell">{formatDate(item.fetchedAt)}</div>
+          </div>
         ))}
-      </tbody>
-    </table>
+      </div>
+    </div>
   );
 }
 

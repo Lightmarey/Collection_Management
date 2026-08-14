@@ -434,8 +434,7 @@ button {
   background: var(--selected-surface);
   box-shadow: inset 3px 0 var(--accent-color);
 }
-.document-card.multi-selected,
-.document-table tr.multi-selected {
+.document-card.multi-selected {
   background: var(--selected-surface);
 }
 .multi-check {
@@ -548,46 +547,81 @@ button {
   color: #626a73;
 }
 .document-table {
+  --document-table-columns:
+    minmax(220px, 3fr)
+    minmax(82px, 0.8fr)
+    minmax(120px, 1.2fr)
+    minmax(56px, 0.55fr)
+    minmax(76px, 0.7fr);
   width: 100%;
-  border-collapse: collapse;
   font-size: 12px;
 }
-.document-table th,
-.document-table td {
+.document-table-head,
+.document-table-body > [role="row"] {
+  display: grid;
+  grid-template-columns: var(--document-table-columns);
+}
+.document-table-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.document-table-body > [role="row"] {
+  height: 48px;
+  flex: 0 0 48px;
+  overflow: hidden;
+}
+.document-table-head > div,
+.document-table-body > [role="row"] > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
   padding: 10px;
   border-bottom: 1px solid var(--border-color);
   text-align: left;
 }
-.document-table th {
+.document-table-body > [role="row"] > div {
+  height: 48px;
+  min-height: 0;
+  max-height: 48px;
+  border-bottom: 0;
+  overflow: hidden;
+}
+.document-table-head {
   position: sticky;
   top: 0;
+  z-index: 1;
+}
+.document-table-head > div {
   background: var(--surface-soft);
   color: var(--muted-color);
   font-weight: 500;
 }
-.document-table tr.selected {
+.document-table-body > .selected {
   background: var(--selected-surface);
+  box-shadow:
+    inset 3px 0 var(--accent-color),
+    inset 0 0 0 1px var(--selected-border);
   color: var(--selected-text);
 }
-.document-table tbody tr:hover:not(.selected):not(.multi-selected) {
+.document-table-body > .multi-selected:not(.selected) {
+  background: color-mix(in srgb, var(--selected-surface) 68%, var(--surface));
+}
+.document-table-body > [role="row"]:hover:not(.selected):not(.multi-selected) {
   background: var(--surface-hover);
 }
-.document-table tr.selected td:first-child,
-.document-table tr.multi-selected td:first-child {
-  box-shadow: inset 3px 0 var(--accent-color);
-}
-.document-table td:first-child {
-  max-width: 260px;
+.document-table-body > [role="row"] > div:first-child {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.document-table td span {
+.document-table-body span {
   margin-right: 5px;
   color: color-mix(in srgb, var(--accent-color) 72%, var(--text-color));
 }
 .document-tags-cell {
-  height: 42px;
   cursor: pointer;
-  vertical-align: middle;
 }
 .document-tags-cell .empty {
   color: var(--muted-color);
