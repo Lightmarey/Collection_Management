@@ -990,6 +990,12 @@ function App() {
         ? `发现新版本 ${result.latestVersion}`
         : `已是最新版本 ${result.currentVersion}`,
     );
+    if (
+      result.updateAvailable &&
+      result.downloadUrl &&
+      window.confirm(`发现新版本 ${result.latestVersion}，打开下载页面？`)
+    )
+      await window.desktop.openUpdatePage(result.downloadUrl);
   }
 
   function openAnnotation(item: ReaderAnnotationListItem) {

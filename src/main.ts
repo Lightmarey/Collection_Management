@@ -7,6 +7,7 @@ import {
   Menu,
   nativeTheme,
   protocol,
+  shell,
 } from "electron";
 import path from "node:path";
 import { openKnowledgeDatabase, type KnowledgeDatabase } from "./database.mjs";
@@ -123,26 +124,28 @@ function registerAppIpc() {
       ok: true,
       version: app.getVersion(),
       packaged: app.isPackaged,
-      updateConfigured: Boolean(process.env.KNOWLEDGE_UPDATE_MANIFEST_URL),
+      updateConfigured: true,
     };
   });
   ipcMain.handle("app:check-update", async (event) => {
     assertTrusted(event.sender);
-    const manifestUrl = process.env.KNOWLEDGE_UPDATE_MANIFEST_URL;
-    if (!manifestUrl)
-      return { ok: false, error: "update_not_configured" };
     try {
-      const parsed = new URL(manifestUrl);
-      if (parsed.protocol !== "https:")
-        return { ok: false, error: "update_manifest_invalid" };
-      const response = await fetch(parsed, { signal: AbortSignal.timeout(10_000) });
+      const response = await fetch(
+        "https://api.github.com/repos/Lightmarey/Collection_Management/releases/latest",
+        {
+          headers: { Accept: "application/vnd.github+json" },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
       if (!response.ok) return { ok: false, error: "update_request_failed" };
-      const manifest = (await response.json()) as {
-        version?: unknown;
-        downloadUrl?: unknown;
+      const release = (await response.json()) as {
+        tag_name?: unknown;
+        html_url?: unknown;
       };
       const latestVersion =
-        typeof manifest.version === "string" ? manifest.version : "";
+        typeof release.tag_name === "string"
+          ? release.tag_name.replace(/^v/i, "")
+          : "";
       if (!/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(latestVersion))
         return { ok: false, error: "update_manifest_invalid" };
       const currentVersion = app.getVersion();
@@ -161,11 +164,21 @@ function registerAppIpc() {
         latestVersion,
         updateAvailable,
         downloadUrl:
-          typeof manifest.downloadUrl === "string" ? manifest.downloadUrl : null,
+          typeof release.html_url === "string" ? release.html_url : null,
       };
     } catch {
       return { ok: false, error: "update_request_failed" };
     }
+  });
+  ipcMain.handle("app:open-update", async (event, url: unknown) => {
+    assertTrusted(event.sender);
+    if (
+      typeof url !== "string" ||
+      !/^https:\/\/github\.com\/Lightmarey\/Collection_Management\/releases\//i.test(url)
+    )
+      return { ok: false, error: "update_url_invalid" };
+    await shell.openExternal(url);
+    return { ok: true };
   });
   ipcMain.handle("app:window-minimize", (event) => {
     assertTrusted(event.sender);

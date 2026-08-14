@@ -25,6 +25,7 @@ export type DesktopApi = ReaderClient & {
     updateAvailable?: boolean;
     downloadUrl?: string | null;
   }>;
+  openUpdatePage(url: string): Promise<{ ok: boolean; error?: string }>;
   createDataBackup(): Promise<{
     ok: boolean;
     cancelled?: boolean;

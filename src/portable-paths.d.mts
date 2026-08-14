@@ -1,4 +1,5 @@
 export function isSquirrelInstall(execPath: string, exists?: (path: string) => boolean): boolean;
+export function isWindowsSystemInstall(execPath: string, programFilesPaths?: Array<string | undefined>): boolean;
 export function runtimeDataRoot(input: {
   isPackaged: boolean;
   execPath: string;
@@ -8,4 +9,5 @@ export function runtimeDataRoot(input: {
   override?: string;
   portable?: string;
   exists?: (path: string) => boolean;
+  programFilesPaths?: Array<string | undefined>;
 }): string;

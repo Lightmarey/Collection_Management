@@ -1,5 +1,7 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
+import { MakerDeb } from '@electron-forge/maker-deb';
+import { MakerRpm } from '@electron-forge/maker-rpm';
+import { MakerWix } from '@electron-forge/maker-wix';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { VitePlugin } from '@electron-forge/plugin-vite';
@@ -11,7 +13,27 @@ const config: ForgeConfig = {
     ignore: (file) => Boolean(file) && !file.startsWith('/.vite') && !file.startsWith('/node_modules'),
   },
   rebuildConfig: {},
-  makers: [new MakerSquirrel({}), new MakerZIP({}, ['win32', 'linux', 'darwin'])],
+  makers: [
+    new MakerWix({
+      manufacturer: 'Knowledge Management contributors',
+      defaultInstallMode: 'perMachine',
+    }, ['win32']),
+    new MakerZIP({}, ['win32', 'darwin']),
+    new MakerDeb({
+      options: {
+        maintainer: 'Knowledge Management contributors',
+        homepage: 'https://github.com/Lightmarey/Collection_Management',
+        categories: ['Office'],
+      },
+    }, ['linux']),
+    new MakerRpm({
+      options: {
+        license: 'AGPL-3.0-only',
+        homepage: 'https://github.com/Lightmarey/Collection_Management',
+        categories: ['Office'],
+      },
+    }, ['linux']),
+  ],
   plugins: [
     new VitePlugin({
       build: [

@@ -4,6 +4,7 @@ import type { DesktopApi } from "./contracts/desktop";
 const desktop: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke("app:info"),
   checkForUpdates: () => ipcRenderer.invoke("app:check-update"),
+  openUpdatePage: (url) => ipcRenderer.invoke("app:open-update", url),
   createDataBackup: () => ipcRenderer.invoke("backup:create"),
   restoreDataBackup: () => ipcRenderer.invoke("backup:restore"),
   minimizeAppWindow: () => ipcRenderer.invoke("app:window-minimize"),
