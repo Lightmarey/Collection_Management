@@ -871,7 +871,17 @@ function App() {
     } else setStatus(`同步未开始：${result.error}`);
   }
   async function removeRemoteMembership() {
-    if (!reader || reader.source !== "zhihu") return;
+    if (
+      !reader ||
+      !(
+        reader.source.split(":", 1)[0] === "zhihu" ||
+        reader.sourceMemberships?.some(
+          (membership) => membership.source.split(":", 1)[0] === "zhihu",
+        ) ||
+        /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(reader.url ?? "")
+      )
+    )
+      return;
     if (
       !window.confirm(
         "从这篇内容所属的全部自有知乎收藏夹中取消收藏？本地正文会保留。",
@@ -2933,7 +2943,11 @@ function Properties({
           <RotateCcw size={15} />
           单条同步
         </button>
-        {reader.source === "zhihu" &&
+        {(reader.source.split(":", 1)[0] === "zhihu" ||
+          reader.sourceMemberships?.some(
+            (membership) => membership.source.split(":", 1)[0] === "zhihu",
+          ) ||
+          /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(reader.url ?? "")) &&
           !restore &&
           ((reader.sourceMemberships?.length ?? 0) > 0 ||
             remoteRemovalState === "success") && (

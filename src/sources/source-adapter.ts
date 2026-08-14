@@ -9,6 +9,15 @@ export type SourceDescriptor = {
   name: string;
 };
 
+export type StoredSourceMembership = {
+  source: string;
+  sourceId: string;
+  name: string;
+  externalId: string;
+  documentSource: string;
+  url: string | null;
+};
+
 export type DiscoveredSource = SourceDescriptor & {
   owned: boolean;
   writable: boolean;
@@ -60,5 +69,6 @@ export interface SourceAdapter {
   hideRecovery(): void;
   localize(document: ParsedDocument): Promise<ParsedDocument>;
   discoverSources?(): Promise<DiscoveredSource[]>;
+  resolveMembership?(membership: StoredSourceMembership): SourceDescriptor;
   removeMembership?(source: SourceDescriptor, item: SyncItem): Promise<{ ok: boolean; error?: string }>;
 }

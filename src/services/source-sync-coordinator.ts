@@ -1,6 +1,7 @@
 import type { SyncMode } from "../contracts/domain";
 import type { SyncStore } from "../ports/knowledge-store";
 import { SourceRegistry } from "../sources/source-registry";
+import type { StoredSourceMembership } from "../sources/source-adapter";
 import { SourceSyncService } from "./source-sync-service";
 
 export class SourceSyncCoordinator {
@@ -109,44 +110,38 @@ export class SourceSyncCoordinator {
     if (this.busy) return { ok: false as const, error: "sync_already_running" };
     const memberships = this.store.getDocumentSourceMemberships(
       documentId,
-    ) as Array<{
-      source: string;
-      sourceId: string;
-      name: string;
-      externalId: string;
-      documentSource: string;
-      url: string | null;
-    }>;
+    ) as StoredSourceMembership[];
     if (!memberships.length)
       return { ok: false as const, error: "remote_membership_not_found" };
-    const adapter = this.sources.get(memberships[0].documentSource);
-    if (!adapter.removeMembership)
-      return { ok: false as const, error: "remote_cleanup_unsupported" };
-    const targets = memberships.filter(
-      (membership) => membership.documentSource === adapter.id,
-    );
-    if (!targets.length)
-      return { ok: false as const, error: "remote_membership_not_writable" };
     const errors: Array<{ sourceId: string; error: string }> = [];
     const removedSourceIds: string[] = [];
     let completed = 0;
-    for (const [index, membership] of targets.entries()) {
+    for (const [index, membership] of memberships.entries()) {
       if (index) await new Promise((resolve) => setTimeout(resolve, 1200));
       let result;
+      let adapterId = "";
       try {
+        const adapter = this.sources.forRecord(
+          membership.source || membership.documentSource,
+          membership.url,
+        );
+        adapterId = adapter.id;
+        if (!adapter.removeMembership) {
+          errors.push({ sourceId: membership.sourceId, error: "remote_cleanup_unsupported" });
+          continue;
+        }
+        const source = adapter.resolveMembership?.(membership) ?? {
+          source: membership.source,
+          kind: membership.source.split(':')[1] ?? 'collection',
+          id: membership.sourceId,
+          pageUrl: membership.url ?? '',
+          name: membership.name,
+        };
         result = await adapter.removeMembership(
-          {
-            source: membership.source,
-            kind: "collection",
-            id: membership.sourceId,
-            pageUrl: `https://www.zhihu.com/collection/${membership.sourceId}`,
-            name: membership.name,
-          },
+          source,
           {
             externalId: membership.externalId,
-            kind: /zhuanlan\.zhihu\.com\/p\//.test(membership.url ?? "")
-              ? "article"
-              : "answer",
+            kind: "document",
             url: membership.url,
             status: "completed",
           },
@@ -157,7 +152,7 @@ export class SourceSyncCoordinator {
       if (result.ok) {
         try {
           this.store.unlinkCollectionDocument(
-            adapter.id,
+            adapterId,
             membership.sourceId,
             documentId,
           );

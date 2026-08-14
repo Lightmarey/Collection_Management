@@ -14,4 +14,12 @@ export class SourceRegistry {
     if (!adapter) throw new Error(`unknown source adapter: ${id}`);
     return adapter;
   }
+
+  forRecord(source: string, url: string | null) {
+    const adapterId = source.split(':', 1)[0];
+    const explicit = this.adapters.find((candidate) => candidate.id === adapterId);
+    if (explicit) return explicit;
+    if (url) return this.forUrl(url);
+    throw new Error(`unknown source adapter: ${source}`);
+  }
 }

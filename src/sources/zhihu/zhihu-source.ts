@@ -4,7 +4,7 @@ import { importUrl, type ParsedDocument } from '../../document-import.mjs';
 import { classifyFailure, FAILURE_TYPES, membershipRemovalRequest, membershipRemovalResult, zhihuContentId } from '../../zhihu-m0.mjs';
 import { signZhihuRequest } from '../../zhihu-signature.mjs';
 import { isAllowedZhihuAssetUrl, isAllowedZhihuUrl } from '../../security.mjs';
-import type { CaptureResult, DiscoveredSource, SourceAdapter, SourceDescriptor, SourceResponse } from '../source-adapter';
+import type { CaptureResult, DiscoveredSource, SourceAdapter, SourceDescriptor, SourceResponse, StoredSourceMembership } from '../source-adapter';
 import type { MediaStore } from '../../ports/media-store';
 import { localizeDocumentMedia } from '../../services/media-localizer';
 import { sanitizeSvg } from '../../services/svg-sanitizer.mjs';
@@ -113,46 +113,18 @@ export class ZhihuSource implements SourceAdapter {
   }
 
   private async executeJsonFetch(requestUrl: string, headers: Record<string, string> = {}, method = 'GET', body?: string): Promise<SourceResponse> {
-    const contents = this.remoteWindow().webContents;
-    const responseKey = `__kmZhihuContent_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const script = `
-      (async () => {
-        const response = await fetch(${JSON.stringify(requestUrl)}, {
-          method: ${JSON.stringify(method)},
-          credentials: 'include',
-          headers: ${JSON.stringify({ Accept: 'application/json', ...headers })},
-          ${body === undefined ? '' : `body: ${JSON.stringify(body)},`}
-          signal: AbortSignal.timeout(${REQUEST_TIMEOUT_MS}),
-        });
-        const responseText = await response.text().catch(() => '');
-        let payload = null;
-        try { payload = JSON.parse(responseText); } catch {}
-        const fullContent = payload && typeof payload === 'object'
-          ? (typeof payload.content === 'string' ? payload.content : typeof payload.editable_content === 'string' ? payload.editable_content : '')
-          : '';
-        globalThis[${JSON.stringify(responseKey)}] = fullContent;
-        if (fullContent) {
-          payload = { ...payload };
-          delete payload.content;
-          delete payload.editable_content;
-        }
-        return { status: response.status, payload, textSample: payload ? '' : responseText.slice(0, 2048), responseUrl: response.url, contentLength: fullContent.length };
-      })()
-    `;
     try {
-      const result = await Promise.race([
-        contents.executeJavaScript(script, true) as Promise<{ status: number; payload: unknown; textSample: string; responseUrl: string; contentLength: number }>,
-        new Promise<SourceResponse>((resolve) => setTimeout(() => resolve({ status: 599, payload: null, marker: 'none', fetchedAt: new Date().toISOString() }), REQUEST_TIMEOUT_MS)),
-      ]);
-      if ('marker' in result) return result;
-      let content = '';
-      for (let offset = 0; offset < result.contentLength; offset += 256 * 1024) {
-        content += await contents.executeJavaScript(`String(globalThis[${JSON.stringify(responseKey)}] || '').slice(${offset}, ${offset + 256 * 1024})`, true) as string;
-      }
-      const payload = result.payload && typeof result.payload === 'object' && content
-        ? { ...(result.payload as Record<string, unknown>), content }
-        : result.payload;
-      const markerSource = payload && typeof payload === 'object' ? markerFromPayload(payload) : result.textSample;
+      const response = await this.configureSession().fetch(requestUrl, {
+        method,
+        credentials: 'include',
+        headers: { Accept: 'application/json', ...headers },
+        body,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      const responseText = await response.text().catch(() => '');
+      let payload: unknown = null;
+      try { payload = JSON.parse(responseText); } catch {}
+      const markerSource = payload && typeof payload === 'object' ? markerFromPayload(payload) : responseText.slice(0, 2048);
       const marker = /captcha|安全验证|人机验证|verification_required|challenge_required/i.test(markerSource)
         ? FAILURE_TYPES.CAPTCHA
         : /login_expired|authentication_required|err_ticket_not_exist|未登录|请先登录|登录(?:已)?失效/i.test(markerSource)
@@ -162,14 +134,12 @@ export class ZhihuSource implements SourceAdapter {
             : 'none';
       const redirectUrl = payload && typeof payload === 'object' && typeof (payload as Record<string, unknown>).redirect_url === 'string'
         ? String((payload as Record<string, unknown>).redirect_url)
-        : result.responseUrl;
+        : response.url;
       const verificationUrl = /captcha|verify|unhuman|signin|login/i.test(redirectUrl) ? redirectUrl : null;
       const finalMarker = marker !== 'none' ? marker : verificationUrl ? (/signin|login/i.test(verificationUrl) ? FAILURE_TYPES.LOGIN_EXPIRED : FAILURE_TYPES.CAPTCHA) : 'none';
-      return { status: result.status, payload, marker: finalMarker, verificationUrl, fetchedAt: new Date().toISOString() };
+      return { status: response.status, payload, marker: finalMarker, verificationUrl, fetchedAt: new Date().toISOString() };
     } catch {
       return { status: 599, payload: null, marker: 'none', fetchedAt: new Date().toISOString() };
-    } finally {
-      if (!contents.isDestroyed()) void contents.executeJavaScript(`delete globalThis[${JSON.stringify(responseKey)}]`, true).catch(() => {});
     }
   }
 
@@ -240,8 +210,8 @@ export class ZhihuSource implements SourceAdapter {
 
   async removeMembership(source: SourceDescriptor, item: import('../../contracts/domain').SyncItem) {
     if (source.kind !== 'collection' || !item.externalId) return { ok: false, error: 'remote_cleanup_unsupported' };
-    const contentType = item.kind === 'article' ? 'article' : 'answer';
-    const contentId = zhihuContentId(item);
+    const contentType = /(?:zhuanlan\.zhihu\.com|www\.zhihu\.com)\/p\//.test(item.url ?? item.externalId) ? 'article' : 'answer';
+    const contentId = zhihuContentId({ ...item, kind: contentType });
     if (!contentId) return { ok: false, error: 'remote_cleanup_unsupported' };
     const request = membershipRemovalRequest(source.id, contentId, contentType);
     const response = await this.executeJsonFetch(request.url, request.headers, request.method, request.body);
@@ -252,6 +222,16 @@ export class ZhihuSource implements SourceAdapter {
       ? captured.items.some((candidate) => candidate.externalId === item.externalId || zhihuContentId(candidate) === contentId)
       : null;
     return membershipRemovalResult(response.status, membershipPresent);
+  }
+
+  resolveMembership(membership: StoredSourceMembership): SourceDescriptor {
+    return {
+      source: membership.source,
+      kind: membership.source.split(':')[1] ?? 'collection',
+      id: membership.sourceId,
+      pageUrl: `https://www.zhihu.com/collection/${membership.sourceId}`,
+      name: membership.name,
+    };
   }
 
   async capture(url: string, hooks: Record<string, unknown> = {}): Promise<CaptureResult> {
