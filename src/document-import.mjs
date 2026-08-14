@@ -50,13 +50,24 @@ function safeAttributeUrl(raw, baseUrl = '') {
 
 function sanitizeHtml(html, baseUrl = '') {
   const window = new JSDOM('').window;
+  window.document.body.innerHTML = value(html);
+  for (const image of window.document.querySelectorAll('img')) {
+    const preferred = image.getAttribute('data-actualsrc') || image.getAttribute('data-original');
+    const resolved = safeAttributeUrl(preferred, baseUrl);
+    if (resolved) image.setAttribute('src', resolved);
+    image.removeAttribute('srcset');
+  }
+  for (const source of window.document.querySelectorAll('picture source')) source.remove();
   const purifier = createDOMPurify(window);
   purifier.addHook('uponSanitizeAttribute', (_node, data) => {
     const name = data.attrName.toLowerCase();
     if (name.startsWith('on') || name === 'style' || ['href', 'src', 'poster', 'action', 'formaction'].includes(name)) {
       const safe = ['href', 'src', 'poster'].includes(name) ? safeAttributeUrl(data.attrValue, baseUrl) : null;
       if (name.startsWith('on') || name === 'style' || !safe) data.keepAttr = false;
-      else data.attrValue = safe;
+      else {
+        data.attrValue = safe;
+        data.forceKeepAttr = true;
+      }
     }
   });
   purifier.addHook('afterSanitizeAttributes', (node) => {
@@ -65,7 +76,7 @@ function sanitizeHtml(html, baseUrl = '') {
       node.setAttribute('rel', 'noopener noreferrer');
     }
   });
-  const clean = purifier.sanitize(html, {
+  const clean = purifier.sanitize(window.document.body.innerHTML, {
     ALLOW_DATA_ATTR: false,
     FORBID_ATTR: ['style'],
     FORBID_TAGS: ['base', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'style', 'svg', 'template'],
@@ -240,8 +251,6 @@ function visibleResponseText(body) {
 
 function classifyImportFailure(status, body = '') {
   const textBody = visibleResponseText(body);
-  if (/captcha|安全验证|人机验证/i.test(textBody)) return IMPORT_STATUS.CAPTCHA;
-  if (/付费|盐选|无权限|permission|forbidden/i.test(textBody)) return IMPORT_STATUS.PAID_OR_NO_PERMISSION;
   return classifyFailure({ status, body: textBody }) || (status >= 400 ? IMPORT_STATUS.HTTP_ERROR : null);
 }
 
@@ -285,18 +294,18 @@ export async function importZhihuContent(url, { fetchJson } = {}) {
   try {
     response = await fetchJson(request.url, request.include);
   } catch {
-    return { ...failureResult(IMPORT_STATUS.HTTP_ERROR), source: 'zhihu', externalId: normalized, url: normalized };
+    return { ...failureResult(IMPORT_STATUS.HTTP_ERROR), source: 'zhihu', externalId: normalized, url: normalized, httpStatus: null, failureStage: 'document_detail' };
   }
-  const status = classifyFailure({ status: Number(response?.status), body: response?.marker ?? '' });
-  if (status) return { ...failureResult(status), source: 'zhihu', externalId: normalized, url: normalized };
-
   const payload = response?.payload && typeof response.payload === 'object' ? response.payload : null;
   const content = typeof payload?.content === 'string' ? payload.content : typeof payload?.editable_content === 'string' ? payload.editable_content : '';
-  if (!content.trim()) return { ...failureResult(IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized };
+  if (!content.trim()) {
+    const status = classifyFailure({ status: Number(response?.status), body: response?.marker ?? payload ?? '' });
+    return { ...failureResult(status ?? IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized, httpStatus: Number.isInteger(Number(response?.status)) ? Number(response.status) : null, failureStage: 'document_detail' };
+  }
   const title = value(payload?.title) || value(payload?.question?.title);
   const author = value(payload?.author?.name) || value(payload?.question?.author?.name);
   const publishedAt = detailDate(payload?.created_time ?? payload?.createdTime);
-  const parsed = parseDocument({ kind: 'html', content, source: 'zhihu', externalId: normalized, url: normalized, title, author, publishedAt, fetchedAt: response?.fetchedAt });
+  const parsed = parseDocument({ kind: 'html', content: `<div class="RichContent-inner">${content}</div>`, source: 'zhihu', externalId: normalized, url: normalized, title, author, publishedAt, fetchedAt: response?.fetchedAt });
   return parsed.ok ? parsed : { ...parsed, source: 'zhihu', externalId: normalized, url: normalized };
 }
 

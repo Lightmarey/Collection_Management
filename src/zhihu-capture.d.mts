@@ -35,6 +35,7 @@ export function captureCollection(value: string, options: {
     url?: string | null;
     titleHash?: string;
     contentHash?: string | null;
+    updatedAt?: string | null;
     status: string;
   }>;
 }>;
@@ -60,6 +61,7 @@ export function captureSource(value: string, options: {
     url?: string | null;
     titleHash?: string;
     contentHash?: string | null;
+    updatedAt?: string | null;
     status: string;
   }>;
 }>;

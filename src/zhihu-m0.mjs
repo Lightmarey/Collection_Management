@@ -13,6 +13,24 @@ export const FAILURE_TYPES = Object.freeze({
   STOPPED: "stopped",
 });
 
+export function zhihuContentId({ externalId, url, kind } = {}) {
+  const direct = String(externalId ?? "").trim();
+  if (/^\d+$/.test(direct)) return direct;
+  const candidate = String(url ?? direct).trim();
+  const pattern = kind === "article" ? /\/p\/(\d+)(?:[/?#]|$)/ : /\/answer\/(\d+)(?:[/?#]|$)/;
+  return candidate.match(pattern)?.[1] ?? null;
+}
+
+export function membershipRemovalResult(status, membershipPresent = null) {
+  if (status >= 200 && status < 300) return { ok: true };
+  if (status === 404 || status === 599) {
+    if (membershipPresent === false) return { ok: true, verifiedAbsent: true };
+    if (membershipPresent === true) return { ok: false, error: "remote_membership_still_present" };
+    return { ok: false, error: "remote_state_unknown" };
+  }
+  return { ok: false, error: `http_${status}` };
+}
+
 function sha256(value) {
   return createHash("sha256").update(String(value)).digest("hex");
 }
@@ -35,10 +53,10 @@ export function redact(value, key = "") {
 
 export function classifyFailure({ status, body = "" } = {}) {
   const text = typeof body === "string" ? body : JSON.stringify(body);
-  if (status === 401 || status === 403) return FAILURE_TYPES.LOGIN_EXPIRED;
   if (status === 429) return FAILURE_TYPES.RATE_LIMITED;
-  if (/captcha|安全验证|人机验证/i.test(text)) return FAILURE_TYPES.CAPTCHA;
-  if (/付费|盐选|无权限|permission|forbidden/i.test(text)) return FAILURE_TYPES.UNAVAILABLE;
+  if (/captcha|安全验证|人机验证|verification_required|challenge_required/i.test(text)) return FAILURE_TYPES.CAPTCHA;
+  if (/login_expired|authentication_required|err_ticket_not_exist|未登录|请先登录|登录(?:已)?失效/i.test(text)) return FAILURE_TYPES.LOGIN_EXPIRED;
+  if (/paid_or_no_permission|content_paid|付费内容|盐选内容|无权访问(?:该)?内容|没有权限访问(?:该)?内容/i.test(text)) return FAILURE_TYPES.UNAVAILABLE;
   if (status >= 400) return FAILURE_TYPES.HTTP_ERROR;
   return null;
 }
@@ -60,16 +78,20 @@ export function normalizeCollectionPage(payload) {
     const rawContent = item.content_html ?? item.body ?? (typeof item.content === "string" ? item.content : null)
       ?? content?.content_html ?? content?.content ?? content?.excerpt ?? content?.detailsText ?? "";
     const itemUrl = item.url ?? content.url;
+    const updatedAt = item.updated_time ?? item.updated_at ?? item.updatedAt
+      ?? content?.updated_time ?? content?.updated_at ?? content?.updatedAt ?? null;
     const allowedUrl = typeof itemUrl === "string" && /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(itemUrl)
       ? itemUrl
       : null;
     return {
       externalId: String(externalId),
       kind: String(item.type ?? content?.type ?? "unknown"),
+      title: String(item.title ?? content?.title ?? content?.question?.title ?? ""),
       url: allowedUrl,
       titleHash: sha256(item.title ?? content?.title ?? content?.question?.title ?? ""),
       contentHash: rawContent ? sha256(rawContent) : null,
-      status: item.is_locked || item.is_paid || content?.is_locked || content?.is_paid ? FAILURE_TYPES.UNAVAILABLE : "ok",
+      updatedAt: updatedAt == null ? null : String(updatedAt),
+      status: "ok",
     };
   });
 

@@ -36,6 +36,9 @@ export function importUrl(url: string, options: {
   ok: boolean;
   status: string;
   error?: string;
+  httpStatus?: number | null;
+  failureStage?: string;
+  failureCode?: string;
   source?: string;
   externalId?: string;
   url?: string;
@@ -48,6 +51,9 @@ export function importZhihuContent(url: string, options: {
   ok: boolean;
   status: string;
   error?: string;
+  httpStatus?: number | null;
+  failureStage?: string;
+  failureCode?: string;
   source?: string;
   externalId?: string;
   url?: string;

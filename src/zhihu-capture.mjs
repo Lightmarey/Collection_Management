@@ -157,13 +157,17 @@ function normalizeSourceItems(payload, mode) {
         return { index, status: FAILURE_TYPES.STRUCTURE_CHANGED };
       }
       const rawContent = item.content_html ?? item.body ?? content?.content ?? content?.excerpt ?? "";
+      const updatedAt = item.updated_time ?? item.updated_at ?? item.updatedAt
+        ?? content?.updated_time ?? content?.updated_at ?? content?.updatedAt ?? null;
       return {
         externalId: String(externalId),
         kind: String(item.type ?? content?.type ?? "unknown"),
+        title: String(item.title ?? content?.title ?? content?.question?.title ?? ""),
         url,
         titleHash: hash(item.title ?? content?.title ?? ""),
         contentHash: rawContent ? hash(rawContent) : null,
-        status: item.is_locked || item.is_paid || content?.is_locked || content?.is_paid ? FAILURE_TYPES.UNAVAILABLE : "ok",
+        updatedAt: updatedAt == null ? null : String(updatedAt),
+        status: "ok",
       };
     });
   return {

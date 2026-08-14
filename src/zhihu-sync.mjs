@@ -28,13 +28,55 @@ function skipPending(states, reason) {
 }
 
 export function syncItemHash(item = {}) {
-  return createHash('sha256').update(JSON.stringify({
+  const updatedAt = item.updatedAt == null || item.updatedAt === '' ? null : String(item.updatedAt);
+  const identity = {
     externalId: item.externalId ?? null,
     url: item.url ?? null,
-    titleHash: item.titleHash ?? null,
-    contentHash: item.contentHash ?? null,
     status: item.status ?? null,
-  })).digest('hex');
+  };
+  const changeSignal = updatedAt == null
+    ? { titleHash: item.titleHash ?? null, contentHash: item.contentHash ?? null }
+    : { updatedAt };
+  return createHash('sha256').update(JSON.stringify({ ...identity, ...changeSignal })).digest('hex');
+}
+
+export function matchesSyncItemHash(storedHash, item = {}) {
+  if (storedHash === syncItemHash(item)) return true;
+  const updatedAt = item.updatedAt == null || item.updatedAt === '' ? null : String(item.updatedAt);
+  const identity = { externalId: item.externalId ?? null, url: item.url ?? null, status: item.status ?? null };
+  const changeSignal = updatedAt == null
+    ? { titleHash: item.titleHash ?? null, contentHash: item.contentHash ?? null }
+    : { updatedAt };
+  const accidentalMediaHash = createHash('sha256').update(JSON.stringify({ pipeline: 'media-v2', ...identity, ...changeSignal })).digest('hex');
+  return storedHash === accidentalMediaHash;
+}
+
+export function shouldFetchSyncItem(mode, storedHash, item = {}) {
+  return mode === 'full' || item.status !== 'ok' || !matchesSyncItemHash(storedHash, item);
+}
+
+export function prepareRetrySyncItem(item = {}) {
+  return { ...item, status: 'ok', failureType: null, httpStatus: null, failureStage: null, failureCode: null };
+}
+
+export function remoteCleanupCandidate(item = {}, hasCompleteDocument = () => false) {
+  const externalId = String(item.externalId ?? '').trim();
+  if (!externalId || !['completed', 'skipped'].includes(item.status)) return null;
+  if (!hasCompleteDocument(externalId)) return null;
+  return {
+    externalId,
+    documentId: typeof item.documentId === 'string' ? item.documentId : undefined,
+    kind: item.kind === 'article' ? 'article' : 'answer',
+    status: item.status,
+  };
+}
+
+export function finalSyncJobState(result = {}) {
+  const status = result.status === SYNC_STATUS.COMPLETED
+    ? Number(result.progress?.failed ?? 0) > 0 ? 'failed' : SYNC_STATUS.COMPLETED
+    : result.status === SYNC_STATUS.CANCELLED ? SYNC_STATUS.CANCELLED : SYNC_STATUS.STOPPED;
+  const failureType = result.failureType ?? result.items?.find((item) => item.status === 'failed')?.failureType ?? null;
+  return { status, failureType };
 }
 
 export async function runCollectionSync({
@@ -56,6 +98,7 @@ export async function runCollectionSync({
   const states = items.map((item) => ({
     externalId: item.externalId ?? '',
     kind: item.kind ?? 'unknown',
+    title: item.title ?? '',
     url: item.url ?? null,
     status: item.status === 'ok' ? 'pending' : 'failed',
     failureType: item.status === 'ok' ? null : failureType(item.status),
@@ -91,7 +134,7 @@ export async function runCollectionSync({
       return { status: SYNC_STATUS.CANCELLED, failureType: FAILURE_TYPES.STOPPED, items: states, progress: progress(), capture: captured };
     }
 
-    if (!(await shouldFetchItem(items[index]))) {
+    if (!(await shouldFetchItem(items[index], index))) {
       state.status = 'skipped';
       state.skipped = true;
       report({ phase: 'item', currentExternalId: state.externalId });
@@ -103,16 +146,25 @@ export async function runCollectionSync({
       if (result?.ok) {
         state.status = 'completed';
         state.failureType = null;
+        state.httpStatus = null;
+        state.failureStage = null;
+        state.failureCode = null;
         state.documentId = result.documentId;
         state.created = result.created === true;
         state.versionCreated = result.versionCreated === true;
       } else {
         state.status = 'failed';
         state.failureType = failureType(result?.failureType ?? result?.status);
+        state.httpStatus = Number.isInteger(result?.httpStatus) ? result.httpStatus : null;
+        state.failureStage = typeof result?.failureStage === 'string' ? result.failureStage : null;
+        state.failureCode = typeof result?.failureCode === 'string' ? result.failureCode : null;
       }
     } catch {
       state.status = 'failed';
       state.failureType = FAILURE_TYPES.HTTP_ERROR;
+      state.httpStatus = null;
+      state.failureStage = 'document_import';
+      state.failureCode = 'UnhandledError';
     }
     report({ phase: 'item', currentExternalId: state.externalId });
 

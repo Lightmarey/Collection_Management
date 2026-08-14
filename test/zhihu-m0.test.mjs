@@ -1,10 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { classifyFailure, FAILURE_TYPES, normalizeCollectionPage, redact, safeLogEvent } from "../src/zhihu-m0.mjs";
+import { classifyFailure, FAILURE_TYPES, membershipRemovalResult, normalizeCollectionPage, redact, safeLogEvent, zhihuContentId } from "../src/zhihu-m0.mjs";
 import { captureCollection, captureSource, sourceTarget } from "../src/zhihu-capture.mjs";
 
 const fixture = JSON.parse(await readFile(new URL("../fixtures/zhihu/collection-page.sample.json", import.meta.url)));
+
+test("ambiguous remote removal never succeeds without confirming absence", () => {
+  assert.deepEqual(membershipRemovalResult(204), { ok: true });
+  assert.deepEqual(membershipRemovalResult(404), { ok: false, error: "remote_state_unknown" });
+  assert.deepEqual(membershipRemovalResult(599, true), { ok: false, error: "remote_membership_still_present" });
+  assert.deepEqual(membershipRemovalResult(599, false), { ok: true, verifiedAbsent: true });
+});
 
 test("normalizes twenty-item fixture without retaining content or page tokens", () => {
   const result = normalizeCollectionPage(fixture);
@@ -16,7 +23,7 @@ test("normalizes twenty-item fixture without retaining content or page tokens", 
   assert.ok(!JSON.stringify(result).includes("PAGE_TOKEN"));
 });
 
-test("normalizes the zhihu-plus-plus collection API shape", () => {
+test("normalizes nested collection API items", () => {
   const result = normalizeCollectionPage({
     data: [{
       created: "2026-08-10T00:00:00Z",
@@ -26,6 +33,7 @@ test("normalizes the zhihu-plus-plus collection API shape", () => {
         url: "https://www.zhihu.com/question/1/answer/2",
         title: "[SAMPLE_TITLE]",
         excerpt: "[SAMPLE_BODY]",
+        updated_time: 1786320000,
       },
     }],
     paging: {
@@ -39,9 +47,11 @@ test("normalizes the zhihu-plus-plus collection API shape", () => {
   assert.deepEqual(result.items[0], {
     externalId: "answer-1",
     kind: "answer",
+    title: "[SAMPLE_TITLE]",
     url: "https://www.zhihu.com/question/1/answer/2",
     titleHash: result.items[0].titleHash,
     contentHash: result.items[0].contentHash,
+    updatedAt: '1786320000',
     status: "ok",
   });
   assert.equal(result.items[0].titleHash?.length, 64);
@@ -60,6 +70,13 @@ test("keeps zhuanlan article URLs from collection items", () => {
   const result = normalizeCollectionPage({ data: [{ id: "article-1", type: "article", url: "https://zhuanlan.zhihu.com/p/123", title: "[TITLE]" }] });
   assert.equal(result.status, "ok");
   assert.equal(result.items[0].url, "https://zhuanlan.zhihu.com/p/123");
+});
+
+test("extracts remote membership content ids from stored document URLs", () => {
+  assert.equal(zhihuContentId({ externalId: "92884228411", kind: "answer" }), "92884228411");
+  assert.equal(zhihuContentId({ externalId: "https://www.zhihu.com/question/11172707387/answer/92884228411", kind: "answer" }), "92884228411");
+  assert.equal(zhihuContentId({ externalId: "https://zhuanlan.zhihu.com/p/136542995", kind: "article" }), "136542995");
+  assert.equal(zhihuContentId({ externalId: "not-a-content-id", kind: "answer" }), null);
 });
 
 test("runs the capture flow through every collection page", async () => {
@@ -85,7 +102,7 @@ test("runs the capture flow through every collection page", async () => {
   assert.equal(result.truncated, false);
   assert.equal(result.pageCount, 2);
   assert.equal(calls.length, 3);
-  assert.ok(!JSON.stringify(result).includes("SAMPLE"));
+  assert.equal(result.items[0].title, "[SAMPLE]");
 });
 
 test("supports public column pagination through the existing source boundary", async () => {
@@ -140,10 +157,13 @@ test("redacts credentials, bodies, and query secrets recursively", () => {
 });
 
 test("classifies expected access failures without exposing response bodies", () => {
-  assert.equal(classifyFailure({ status: 401 }), FAILURE_TYPES.LOGIN_EXPIRED);
+  assert.equal(classifyFailure({ status: 401 }), FAILURE_TYPES.HTTP_ERROR);
+  assert.equal(classifyFailure({ status: 403 }), FAILURE_TYPES.HTTP_ERROR);
+  assert.equal(classifyFailure({ status: 401, body: { code: 'authentication_required' } }), FAILURE_TYPES.LOGIN_EXPIRED);
   assert.equal(classifyFailure({ status: 429 }), FAILURE_TYPES.RATE_LIMITED);
   assert.equal(classifyFailure({ body: "安全验证" }), FAILURE_TYPES.CAPTCHA);
   assert.equal(classifyFailure({ body: "盐选内容" }), FAILURE_TYPES.UNAVAILABLE);
+  assert.equal(classifyFailure({ status: 403, body: 'forbidden' }), FAILURE_TYPES.HTTP_ERROR);
   assert.equal(classifyFailure({ status: 500 }), FAILURE_TYPES.HTTP_ERROR);
   assert.equal(normalizeCollectionPage({ data: {} }).status, FAILURE_TYPES.STRUCTURE_CHANGED);
 });
