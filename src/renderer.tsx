@@ -781,6 +781,34 @@ function App() {
     if (reader && selectedIds.has(reader.id)) refreshReader();
   }
 
+  async function editDocumentTags(item: ReaderListItem) {
+    const value = window.prompt(
+      "编辑标签（使用逗号分隔）",
+      item.tagNames.join(", "),
+    );
+    if (value === null) return;
+    const tags = [
+      ...new Set(
+        value
+          .split(/[,，]/)
+          .map((name) => name.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const result = await readerClient.updateDocumentProperties({
+      documentId: item.id,
+      tags,
+    });
+    if (!result.ok)
+      return setStatus(`更新标签失败：${result.error ?? "unknown"}`);
+    setDocuments((current) =>
+      current.map((document) =>
+        document.id === item.id ? { ...document, tagNames: tags } : document,
+      ),
+    );
+    if (reader?.id === item.id) refreshReader();
+  }
+
   async function batchRemove(action: "trash" | "restore" | "delete") {
     const ids = [...selectedIds];
     if (
@@ -1770,6 +1798,7 @@ function App() {
                       selectedId={selectedId}
                       selectedIds={selectedIds}
                       select={selectDocument}
+                      editTags={editDocumentTags}
                       save={(item, patch) => {
                         setReader(
                           reader?.id === item.id
@@ -2489,12 +2518,14 @@ function DocumentTable({
   selectedId,
   selectedIds,
   select,
+  editTags,
   save,
 }: {
   documents: ReaderListItem[];
   selectedId: string | null;
   selectedIds: Set<string>;
   select(item: ReaderListItem, event: React.MouseEvent): void;
+  editTags(item: ReaderListItem): void;
   save(
     item: ReaderListItem,
     patch: { tier?: string; favorite?: boolean },
@@ -2532,10 +2563,21 @@ function DocumentTable({
                 ))}
               </select>
             </td>
-            <td>
-              {item.tagNames.map((tag) => (
-                <span key={tag}>#{tag}</span>
-              ))}
+            <td className="document-tags-cell">
+              <button
+                className="document-tags-button"
+                aria-label={`编辑 ${item.title || "无标题内容"} 的标签`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  editTags(item);
+                }}
+              >
+                {item.tagNames.length ? (
+                  item.tagNames.map((tag) => <span key={tag}>#{tag}</span>)
+                ) : (
+                  <span className="empty">+ 添加标签</span>
+                )}
+              </button>
             </td>
             <td>
               <button

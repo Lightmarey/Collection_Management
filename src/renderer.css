@@ -582,7 +582,22 @@ button {
 }
 .document-table td span {
   margin-right: 5px;
-  color: #6f65a8;
+  color: color-mix(in srgb, var(--accent-color) 72%, var(--text-color));
+}
+.document-tags-button {
+  display: flex;
+  width: 100%;
+  min-height: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 2px 0;
+  text-align: left;
+}
+.document-tags-button .empty {
+  color: var(--muted-color);
+}
+.document-tags-button:hover span {
+  color: var(--accent-color);
 }
 .document-table select,
 .document-table button {
