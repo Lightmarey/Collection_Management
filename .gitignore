@@ -3,4 +3,10 @@ node_modules/
 out/
 dist/
 .portable-data/
+.worktree/
+.orca-worktree-trash/
+automation/.runtime/
+.env
+.env.*
+!.env.example
 *.log
