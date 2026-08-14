@@ -73,9 +73,9 @@ test("keeps zhuanlan article URLs from collection items", () => {
 });
 
 test("extracts remote membership content ids from stored document URLs", () => {
-  assert.equal(zhihuContentId({ externalId: "92884228411", kind: "answer" }), "92884228411");
-  assert.equal(zhihuContentId({ externalId: "https://www.zhihu.com/question/11172707387/answer/92884228411", kind: "answer" }), "92884228411");
-  assert.equal(zhihuContentId({ externalId: "https://zhuanlan.zhihu.com/p/136542995", kind: "article" }), "136542995");
+  assert.equal(zhihuContentId({ externalId: "987654321", kind: "answer" }), "987654321");
+  assert.equal(zhihuContentId({ externalId: "https://www.zhihu.com/question/123456789/answer/987654321", kind: "answer" }), "987654321");
+  assert.equal(zhihuContentId({ externalId: "https://zhuanlan.zhihu.com/p/246813579", kind: "article" }), "246813579");
   assert.equal(zhihuContentId({ externalId: "not-a-content-id", kind: "answer" }), null);
 });
 

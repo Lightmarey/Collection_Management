@@ -5,7 +5,9 @@ import { signZhihuRequest } from '../src/zhihu-signature.mjs';
 
 const partition = 'persist:zhihu-m0';
 const timeoutMs = 30000;
-const pageUrl = process.argv[2] ?? 'https://www.zhihu.com/collection/REDACTED_COLLECTION_ID';
+const pageUrl = process.argv.slice(2).find((value) => value.startsWith('https://'))
+  ?? process.env.ZHIHU_TEST_SOURCE_URL;
+if (!pageUrl) throw new Error('pass a Zhihu collection URL or set ZHIHU_TEST_SOURCE_URL');
 let stage = 'startup';
 
 app.setPath('userData', runtimeDataRoot({ isPackaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath(), appDataPath: app.getPath('appData'), override: process.env.KNOWLEDGE_DATA_DIR, portable: process.env.KNOWLEDGE_PORTABLE }));

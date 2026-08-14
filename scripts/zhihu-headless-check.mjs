@@ -9,7 +9,9 @@ import { signZhihuRequest } from '../src/zhihu-signature.mjs';
 import { openKnowledgeDatabase } from '../src/database.mjs';
 import { matchesSyncItemHash, runCollectionSync, syncItemHash } from '../src/zhihu-sync.mjs';
 
-const url = process.argv[2] ?? 'https://www.zhihu.com/collection/REDACTED_COLLECTION_ID';
+const url = process.argv.slice(2).find((value) => value.startsWith('https://'))
+  ?? process.env.ZHIHU_TEST_SOURCE_URL;
+if (!url) throw new Error('pass a Zhihu collection URL or set ZHIHU_TEST_SOURCE_URL');
 const partition = 'persist:zhihu-m0';
 const timeoutMs = 15000;
 const verifyIncremental = process.argv.includes('--verify-incremental');

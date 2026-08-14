@@ -21,7 +21,7 @@
     "postmake:portable": "node scripts/verify-distribution.mjs portable",
     "test": "node --test test/*.test.mjs",
     "test:zhihu-headless": "electron scripts/zhihu-headless-check.mjs",
-    "test:zhihu-chain": "electron scripts/zhihu-headless-check.mjs https://www.zhihu.com/collection/REDACTED_COLLECTION_ID --verify-incremental",
+    "test:zhihu-chain": "electron scripts/zhihu-headless-check.mjs --verify-incremental",
     "test:zhihu-signature-live": "electron scripts/zhihu-signature-check.mjs",
     "test:smoke": "node scripts/electron-smoke.mjs",
     "typecheck": "tsc --noEmit"
