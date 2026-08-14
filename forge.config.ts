@@ -10,7 +10,9 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: { unpack: '**/*.node' },
-    ignore: (file) => Boolean(file) && !file.startsWith('/.vite') && !file.startsWith('/node_modules'),
+    ignore: (file) =>
+      file.includes('/node_modules/better-sqlite3/prebuilds/')
+      || (Boolean(file) && !file.startsWith('/.vite') && !file.startsWith('/node_modules')),
   },
   rebuildConfig: {},
   makers: [
