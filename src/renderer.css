@@ -35,6 +35,10 @@ button {
   --border-color: #e5e7eb;
   --text-color: #2d333b;
   --muted-color: #7b838d;
+  --accent-color: #327fe5;
+  --selected-surface: #e8f1ff;
+  --selected-border: #b8d2f2;
+  --selected-text: #1f3f66;
   --soft-shadow: #1820382b;
   --motion-fast: 110ms;
   --motion-panel: 160ms;
@@ -49,7 +53,7 @@ button {
   display: grid;
   grid-template-columns: var(--nav-width) minmax(260px, var(--list-width)) 1fr;
   align-items: center;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-color);
   background: var(--surface);
   -webkit-app-region: drag;
 }
@@ -117,19 +121,23 @@ button {
   padding: 0 20px;
   border: 0;
   background: transparent;
-  color: #24292f;
+  color: var(--text-color);
 }
 .brand-button b {
   font-family: Georgia, serif;
   font-size: 18px;
+  letter-spacing: -0.02em;
+}
+.brand-button svg {
+  color: var(--muted-color);
 }
 .global-search {
   height: 34px;
   padding: 0 10px;
-  border: 1px solid #dfe3e8;
+  border: 1px solid var(--border-color);
   border-radius: 7px;
-  background: #f7f8fa;
-  color: #8b949e;
+  background: var(--surface-soft);
+  color: var(--muted-color);
 }
 .global-search input {
   min-width: 0;
@@ -181,12 +189,12 @@ button {
   display: flex;
   flex-direction: column;
   padding: 20px 12px;
-  background: #f7f8f9;
+  background: var(--surface-soft);
 }
 .nav-section > span {
   display: block;
   padding: 8px 10px;
-  color: #8b949e;
+  color: var(--muted-color);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -202,15 +210,19 @@ button {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #57606a;
+  color: var(--muted-color);
   text-align: left;
 }
 .nav-section button:hover,
+.nav-bottom button:hover {
+  background: var(--surface-hover);
+  color: var(--text-color);
+}
 .nav-section button.active,
-.nav-bottom button:hover,
 .nav-bottom button.active {
-  background: #e9ecef;
-  color: #24292f;
+  background: var(--selected-surface);
+  box-shadow: inset 3px 0 var(--accent-color);
+  color: var(--selected-text);
 }
 .nav-section em,
 .nav-bottom em {
@@ -399,7 +411,7 @@ button {
   display: flex;
   width: 100%;
   border: 1px solid transparent;
-  border-bottom-color: #eef0f2;
+  border-bottom-color: var(--border-color);
   background: transparent;
 }
 .document-main {
@@ -412,18 +424,19 @@ button {
   background: transparent;
   text-align: left;
 }
-.document-card:hover,
-.document-card.selected {
+.document-card:hover {
   border-radius: 8px;
-  background: #f4f6f8;
+  background: var(--surface-hover);
 }
 .document-card.selected {
-  border-color: #b8d2f2;
-  box-shadow: inset 3px 0 #327fe5;
+  border-color: var(--selected-border);
+  border-radius: 8px;
+  background: var(--selected-surface);
+  box-shadow: inset 3px 0 var(--accent-color);
 }
 .document-card.multi-selected,
 .document-table tr.multi-selected {
-  background: #e8f1ff;
+  background: var(--selected-surface);
 }
 .multi-check {
   position: absolute;
@@ -435,7 +448,7 @@ button {
   height: 18px;
   place-items: center;
   border-radius: 50%;
-  background: #327fe5;
+  background: var(--accent-color);
   color: #fff;
   font-size: 11px;
 }
@@ -542,18 +555,26 @@ button {
 .document-table th,
 .document-table td {
   padding: 10px;
-  border-bottom: 1px solid #e8eaed;
+  border-bottom: 1px solid var(--border-color);
   text-align: left;
 }
 .document-table th {
   position: sticky;
   top: 0;
   background: var(--surface-soft);
-  color: #7b838d;
+  color: var(--muted-color);
   font-weight: 500;
 }
 .document-table tr.selected {
-  background: #eef5ff;
+  background: var(--selected-surface);
+  color: var(--selected-text);
+}
+.document-table tbody tr:hover:not(.selected):not(.multi-selected) {
+  background: var(--surface-hover);
+}
+.document-table tr.selected td:first-child,
+.document-table tr.multi-selected td:first-child {
+  box-shadow: inset 3px 0 var(--accent-color);
 }
 .document-table td:first-child {
   max-width: 260px;
@@ -567,6 +588,11 @@ button {
 .document-table button {
   border: 0;
   background: transparent;
+  color: inherit;
+}
+.document-table option {
+  background: var(--surface-raised);
+  color: var(--text-color);
 }
 .content-pane {
   display: flex;

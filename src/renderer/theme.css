@@ -6,6 +6,10 @@
   --border-color: #41454b;
   --text-color: #d7dce2;
   --muted-color: #9ca5af;
+  --accent-color: #78a9ff;
+  --selected-surface: #293a50;
+  --selected-border: #4d6f99;
+  --selected-text: #f4f7fb;
   --soft-shadow: #0006;
   color-scheme: dark;
   color: #d7dce2;
@@ -49,11 +53,8 @@
 .app[data-theme="dark"]
   :is(
     .document-card:hover,
-    .document-card.selected,
     .nav-section button:hover,
-    .nav-section button.active,
-    .nav-bottom button:hover,
-    .nav-bottom button.active
+    .nav-bottom button:hover
   ) {
   background: #30343a;
 }
@@ -124,14 +125,18 @@
 .app[data-theme="dark"]
   :is(
     .source-options label.selected,
-    .bulk-actions,
-    .document-card.multi-selected,
-    .document-table tr.multi-selected
+    .bulk-actions
   ) {
   background: #26364a;
 }
 .app[data-theme="dark"] .drop-zone {
   color: #aab2bb;
+}
+.app[data-theme="dark"] .document-card.selected {
+  border-color: var(--selected-border);
+}
+.app[data-theme="dark"] .document-table select {
+  background: transparent;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -143,6 +148,10 @@
     --border-color: #41454b;
     --text-color: #d7dce2;
     --muted-color: #9ca5af;
+    --accent-color: #78a9ff;
+    --selected-surface: #293a50;
+    --selected-border: #4d6f99;
+    --selected-text: #f4f7fb;
     --soft-shadow: #0006;
     color-scheme: dark;
     color: #d7dce2;
@@ -187,11 +196,8 @@
   .app[data-theme="system"]
     :is(
       .document-card:hover,
-      .document-card.selected,
       .nav-section button:hover,
-      .nav-section button.active,
-      .nav-bottom button:hover,
-      .nav-bottom button.active
+      .nav-bottom button:hover
     ) {
     background: #30343a;
   }
@@ -262,13 +268,17 @@
   .app[data-theme="system"]
     :is(
       .source-options label.selected,
-      .bulk-actions,
-      .document-card.multi-selected,
-      .document-table tr.multi-selected
+      .bulk-actions
     ) {
     background: #26364a;
   }
   .app[data-theme="system"] .drop-zone {
     color: #aab2bb;
+  }
+  .app[data-theme="system"] .document-card.selected {
+    border-color: var(--selected-border);
+  }
+  .app[data-theme="system"] .document-table select {
+    background: transparent;
   }
 }
