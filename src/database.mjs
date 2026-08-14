@@ -2292,7 +2292,7 @@ export class KnowledgeDatabase {
     try {
       this.db.transaction(() => {
         this.db.exec(
-          "DELETE FROM search_index; DELETE FROM reader_session; DELETE FROM reading_states; DELETE FROM jobs; DELETE FROM tasks; DELETE FROM relations; DELETE FROM processing_results; DELETE FROM document_tags; DELETE FROM tags; DELETE FROM notes; DELETE FROM highlights; DELETE FROM collection_items; DELETE FROM collections; UPDATE documents SET current_version_id = NULL; DELETE FROM document_versions; DELETE FROM documents;",
+          "DELETE FROM search_index; DELETE FROM reader_session; DELETE FROM reader_preferences; DELETE FROM reading_states; DELETE FROM jobs; DELETE FROM tasks; DELETE FROM relations; DELETE FROM processing_results; DELETE FROM document_tags; DELETE FROM tags; DELETE FROM notes; DELETE FROM highlights; DELETE FROM collection_items; DELETE FROM collections; UPDATE documents SET current_version_id = NULL; DELETE FROM document_versions; DELETE FROM documents;",
         );
         const documentRows = backup.tables.documents.map((row) => ({
           ...row,

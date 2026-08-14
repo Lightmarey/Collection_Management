@@ -26,6 +26,7 @@ test("backs up and restores the database together with content-addressed media",
       body: "body",
       mediaRefs: [{ url: `km-media://asset/${fileName}`, mimeType: "image/png" }],
     });
+    database.saveReaderPreferences({ theme: "dark" });
     const service = new DataBackupService(database, dataRoot, media);
     const created = await service.create(target);
     assert.equal(created.mediaFiles, 1);
@@ -39,6 +40,7 @@ test("backs up and restores the database together with content-addressed media",
       title: "不应保留",
       body: "body",
     });
+    database.saveReaderPreferences({ theme: "light" });
     await fs.rm(path.join(media, fileName));
     const restored = await service.restore(created.path);
     assert.equal(restored.mediaFiles, 1);
@@ -47,6 +49,7 @@ test("backs up and restores the database together with content-addressed media",
       ["备份正文"],
     );
     assert.deepEqual(await fs.readFile(path.join(media, fileName)), Buffer.from([1, 2, 3]));
+    assert.equal(database.getReaderPreferences().theme, "dark");
     assert.equal((await fs.readdir(path.join(dataRoot, "backups"))).length, 1);
   } finally {
     database.close();
