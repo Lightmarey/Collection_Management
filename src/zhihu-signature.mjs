@@ -106,13 +106,15 @@ function signatureValue(finalUrl, dC0, seed) {
   return `2.0_${encodeCipher(encryptDigest(digest, seed))}`;
 }
 
-export function signZhihuRequest(finalUrl, dC0) {
+export function signZhihuRequest(finalUrl, dC0, xsrfToken) {
   if (typeof dC0 !== 'string' || dC0.length === 0) throw new TypeError('d_c0 is required');
+  if (xsrfToken !== undefined && (typeof xsrfToken !== 'string' || xsrfToken.length === 0)) throw new TypeError('_xsrf is required');
   const url = new URL(finalUrl);
   if (url.protocol !== 'https:' || !/(^|\.)zhihu\.com$/i.test(url.hostname)) throw new TypeError('unsupported Zhihu URL');
   return Object.freeze({
     'x-zse-93': VERSION,
     'x-zse-96': signatureValue(url.href, dC0, 12),
     'x-requested-with': REQUEST_KIND,
+    ...(xsrfToken ? { 'x-xsrftoken': xsrfToken } : {}),
   });
 }

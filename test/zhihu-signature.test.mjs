@@ -27,7 +27,14 @@ test('different URLs produce different signatures', () => {
   assert.notEqual(first['x-zse-96'], second['x-zse-96']);
 });
 
+test('write requests include the matching XSRF token', () => {
+  const headers = signZhihuRequest('https://www.zhihu.com/api/v4/collections/1/contents/2', COOKIE, 'xsrf-token');
+  assert.equal(headers['x-xsrftoken'], 'xsrf-token');
+  assert.equal(signZhihuRequest('https://www.zhihu.com/api/v4/me', COOKIE)['x-xsrftoken'], undefined);
+});
+
 test('missing d_c0 and non-Zhihu URLs are rejected', () => {
   assert.throws(() => signZhihuRequest('https://www.zhihu.com/api/v4/me', ''), /d_c0/);
+  assert.throws(() => signZhihuRequest('https://www.zhihu.com/api/v4/me', COOKIE, ''), /_xsrf/);
   assert.throws(() => signZhihuRequest('https://example.com/api/v4/me', COOKIE), /unsupported/);
 });

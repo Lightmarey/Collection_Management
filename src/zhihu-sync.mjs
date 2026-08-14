@@ -62,10 +62,11 @@ export function prepareRetrySyncItem(item = {}) {
 export function remoteCleanupCandidate(item = {}, hasCompleteDocument = () => false) {
   const externalId = String(item.externalId ?? '').trim();
   if (!externalId || !['completed', 'skipped'].includes(item.status)) return null;
-  if (!hasCompleteDocument(externalId)) return null;
+  const documentId = String(item.documentId ?? item.url ?? externalId).trim();
+  if (!documentId || !hasCompleteDocument(documentId)) return null;
   return {
     externalId,
-    documentId: typeof item.documentId === 'string' ? item.documentId : undefined,
+    documentId,
     kind: item.kind === 'article' ? 'article' : 'answer',
     status: item.status,
   };

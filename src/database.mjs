@@ -776,14 +776,15 @@ export class KnowledgeDatabase {
     }
   }
 
-  hasCompleteDocument(source, externalId) {
+  hasCompleteDocument(source, identifier) {
     const row = this.db
       .prepare(
         `SELECT 1 AS found
       FROM documents d JOIN document_versions v ON v.id = d.current_version_id
-      WHERE d.source = ? AND d.external_id = ? AND d.deleted_at IS NULL AND length(trim(v.body)) > 0 LIMIT 1`,
+      WHERE d.source = ? AND (d.id = ? OR d.external_id = ? OR d.url = ?)
+        AND d.deleted_at IS NULL AND length(trim(v.body)) > 0 LIMIT 1`,
       )
-      .get(text(source), text(externalId));
+      .get(text(source), text(identifier), text(identifier), text(identifier));
     return row?.found === 1;
   }
 

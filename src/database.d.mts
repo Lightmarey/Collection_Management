@@ -79,7 +79,7 @@ export class KnowledgeDatabase {
     sourceId: string,
     documentId: string,
   ): number;
-  hasCompleteDocument(source: string, externalId: string): boolean;
+  hasCompleteDocument(source: string, identifier: string): boolean;
   createSyncJob(input: {
     adapterId?: string;
     type?: string;

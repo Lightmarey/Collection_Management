@@ -5,10 +5,10 @@ export function shouldFetchSyncItem(mode: 'incremental' | 'full', storedHash: st
 export function prepareRetrySyncItem(item?: Record<string, unknown>): Record<string, unknown>;
 export function remoteCleanupCandidate(
   item: Record<string, unknown>,
-  hasCompleteDocument: (externalId: string) => boolean,
+  hasCompleteDocument: (documentId: string) => boolean,
 ): null | {
   externalId: string;
-  documentId?: string;
+  documentId: string;
   kind: "article" | "answer";
   status: string;
 };

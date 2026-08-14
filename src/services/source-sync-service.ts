@@ -251,7 +251,7 @@ export class SourceSyncService {
 
         if (!retryItem && current.payload.removeRemoteAfterSave && result.capture?.ok === true && target.kind === 'collection' && this.adapter.removeMembership) {
           for (const item of result.items as SyncItem[]) {
-            const candidate = remoteCleanupCandidate(item, (externalId) => this.database.hasCompleteDocument(this.adapter.id, externalId));
+            const candidate = remoteCleanupCandidate(item, (documentId) => this.database.hasCompleteDocument(this.adapter.id, documentId));
             if (candidate) cleanupQueue.push({ target, item: { ...item, ...candidate } });
           }
         }

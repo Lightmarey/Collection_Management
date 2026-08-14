@@ -106,19 +106,20 @@ test('a completed loop with item failures produces a failed job outcome', () => 
   }), { status: 'failed', failureType: FAILURE_TYPES.HTTP_ERROR });
 });
 
-test('remote cleanup eligibility verifies the stored document by external id', () => {
+test('remote cleanup eligibility resolves skipped remote items to their stored URL', () => {
   const checked = [];
   const candidate = remoteCleanupCandidate({
-    externalId: 'answer-42',
+    externalId: '42',
     url: 'https://www.zhihu.com/question/1/answer/42',
     status: 'skipped',
     kind: 'answer',
-  }, (externalId) => {
-    checked.push(externalId);
-    return externalId === 'answer-42';
+  }, (documentId) => {
+    checked.push(documentId);
+    return documentId === 'https://www.zhihu.com/question/1/answer/42';
   });
-  assert.deepEqual(checked, ['answer-42']);
-  assert.equal(candidate.externalId, 'answer-42');
+  assert.deepEqual(checked, ['https://www.zhihu.com/question/1/answer/42']);
+  assert.equal(candidate.externalId, '42');
+  assert.equal(candidate.documentId, 'https://www.zhihu.com/question/1/answer/42');
   assert.equal(remoteCleanupCandidate({ externalId: 'missing', status: 'completed' }, () => false), null);
   assert.equal(remoteCleanupCandidate({ externalId: 'failed', status: 'failed' }, () => true), null);
 });

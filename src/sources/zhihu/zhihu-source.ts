@@ -200,10 +200,12 @@ export class ZhihuSource implements SourceAdapter {
 
   private async signedRequest(url: string, method = 'GET') {
     const requestUrl = new URL(url);
-    const cookies = await this.configureSession().cookies.get({ url: 'https://www.zhihu.com/', name: 'd_c0' });
+    const cookies = await this.configureSession().cookies.get({ url: 'https://www.zhihu.com/' });
     const dC0 = cookies.find((cookie) => cookie.name === 'd_c0')?.value;
     if (!dC0) return { status: 401, payload: null, marker: FAILURE_TYPES.LOGIN_EXPIRED, fetchedAt: new Date().toISOString() } satisfies SourceResponse;
-    return this.executeJsonFetch(requestUrl.href, signZhihuRequest(requestUrl.href, dC0), method);
+    const xsrfToken = method === 'GET' ? undefined : cookies.find((cookie) => cookie.name === '_xsrf')?.value;
+    if (method !== 'GET' && !xsrfToken) return { status: 403, payload: null, marker: FAILURE_TYPES.HTTP_ERROR, fetchedAt: new Date().toISOString() } satisfies SourceResponse;
+    return this.executeJsonFetch(requestUrl.href, signZhihuRequest(requestUrl.href, dC0, xsrfToken), method);
   }
 
   async discoverSources(): Promise<DiscoveredSource[]> {

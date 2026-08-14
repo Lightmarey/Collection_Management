@@ -473,12 +473,13 @@ test("tracks and removes a document's remote collection memberships", () => {
     path.join(directory, "knowledge.sqlite"),
     { startupBackup: false },
   );
+  const documentUrl = "https://www.zhihu.com/question/1/answer/42";
   const document = database.upsertDocument({
     source: "zhihu",
     externalId: "42",
     title: "answer",
     body: "body",
-    url: "https://www.zhihu.com/question/1/answer/42",
+    url: documentUrl,
   });
   const collection = database.upsertCollection({
     source: "zhihu",
@@ -486,8 +487,11 @@ test("tracks and removes a document's remote collection memberships", () => {
     name: "owned",
   });
   database.linkCollectionDocument(collection.collectionId, document.documentId, 0, "sync-hash");
+  assert.equal(database.hasCompleteDocument("zhihu", document.documentId), true);
+  assert.equal(database.hasCompleteDocument("zhihu", "42"), true);
+  assert.equal(database.hasCompleteDocument("zhihu", documentUrl), true);
   assert.equal(database.getCollectionItemSyncHash(collection.collectionId, "42"), "sync-hash");
-  assert.equal(database.getCollectionItemSyncHash(collection.collectionId, document.url), null);
+  assert.equal(database.getCollectionItemSyncHash(collection.collectionId, documentUrl), null);
   assert.deepEqual(
     database
       .getDocumentSourceMemberships(document.documentId)
