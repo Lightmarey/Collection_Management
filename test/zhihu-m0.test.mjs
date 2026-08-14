@@ -1,10 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { classifyFailure, FAILURE_TYPES, membershipRemovalResult, normalizeCollectionPage, redact, safeLogEvent, zhihuContentId } from "../src/zhihu-m0.mjs";
 import { captureCollection, captureSource, sourceTarget } from "../src/zhihu-capture.mjs";
 
-const fixture = JSON.parse(await readFile(new URL("../fixtures/zhihu/collection-page.sample.json", import.meta.url)));
+const fixture = {
+  data: {
+    items: Array.from({ length: 20 }, (_, index) => {
+      const id = `sample-${String(index + 1).padStart(3, "0")}`;
+      return {
+        id,
+        type: "answer",
+        url: `https://www.zhihu.com/question/sample/answer/${id}`,
+        title: `[SAMPLE_TITLE_${id}]`,
+        content_html: `<p>[SAMPLE_BODY_${id}]</p>`,
+      };
+    }),
+    paging: { is_end: false, next: "[REDACTED_PAGE_TOKEN]" },
+  },
+};
 
 test("ambiguous remote removal never succeeds without confirming absence", () => {
   assert.deepEqual(membershipRemovalResult(204), { ok: true });

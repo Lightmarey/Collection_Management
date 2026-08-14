@@ -28,8 +28,6 @@ npm run test:smoke
 npm run make
 ```
 
-架构与安全边界见 [docs/architecture.md](docs/architecture.md) 和 [docs/electron-security-checklist.md](docs/electron-security-checklist.md)。
-
 ## 许可证
 
 本项目采用 [GNU Affero General Public License v3.0](LICENSE)，SPDX 标识为 `AGPL-3.0-only`。
