@@ -455,6 +455,28 @@ button {
   background: transparent;
   text-align: left;
 }
+.list-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.list-controls > select,
+.list-controls > .sort-direction {
+  height: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--muted-color);
+}
+.list-controls > select {
+  padding: 0 8px;
+}
+.list-controls > .sort-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
 .document-card-actions {
   position: absolute;
   top: 7px;
@@ -616,8 +638,8 @@ button {
     minmax(220px, 3fr)
     minmax(82px, 0.8fr)
     minmax(120px, 1.2fr)
-    minmax(56px, 0.55fr)
-    minmax(76px, 0.7fr);
+    minmax(86px, 0.75fr)
+    minmax(56px, 0.45fr);
   width: 100%;
   font-size: 12px;
 }
@@ -728,6 +750,29 @@ button {
 .document-table option {
   background: var(--surface-raised);
   color: var(--text-color);
+}
+.document-table-head > div > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  font-weight: inherit;
+}
+.document-table-head > div > button.active {
+  color: var(--text-color);
+}
+.document-table-actions button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--muted-color);
+}
+.document-table-actions button:hover,
+.document-table-actions button:focus-visible {
+  background: color-mix(in srgb, #cf222e 9%, var(--surface));
+  color: #cf222e;
 }
 .document-menu-layer {
   position: fixed;

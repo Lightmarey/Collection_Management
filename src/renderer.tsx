@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import {
   Archive,
   ArrowLeft,
+  ArrowUpDown,
   Bookmark,
   Check,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   Info,
   Keyboard,
   List,
+  Library,
   Menu,
   Minus,
   Monitor,
@@ -50,6 +52,7 @@ import type {
   ReaderDocument,
   ReaderAnnotationListItem,
   ReaderListItem,
+  ReaderListOptions,
   ReaderPreferences,
   ReaderTag,
   SourceOption,
@@ -96,6 +99,14 @@ const EN_TIER_LABEL: Record<string, string> = {
   long: "Long term",
   archived: "Archived",
 };
+type ListSort = NonNullable<ReaderListOptions["sort"]>;
+type SortDirection = NonNullable<ReaderListOptions["sortDirection"]>;
+const SORT_OPTIONS: Array<{ key: ListSort; label: string }> = [
+  { key: "updated", label: "更新时间" },
+  { key: "title", label: "标题" },
+  { key: "status", label: "层级" },
+  { key: "duration", label: "阅读时长" },
+];
 const DEFAULT_PREFS: ReaderPreferences = {
   locale: "zh-CN",
   theme: "system",
@@ -106,6 +117,8 @@ const DEFAULT_PREFS: ReaderPreferences = {
   contentWidth: 760,
   pageMargin: 48,
   listView: "list",
+  listSort: "updated",
+  listSortDirection: "desc",
   sidebarCollapsed: false,
   tocHidden: false,
   infoHidden: false,
@@ -349,7 +362,8 @@ function App() {
       const result = await readerClient.readerBootstrap({
         filter,
         query,
-        sort: "updated",
+        sort: preferences.listSort ?? "updated",
+        sortDirection: preferences.listSortDirection ?? "desc",
         limit: 10000,
       });
       if (!result.ok) {
@@ -375,7 +389,7 @@ function App() {
       setStatus(`${next.length} 篇本地内容`);
       if (!quiet) setLoading(false);
     },
-    [filter, query],
+    [filter, preferences.listSort, preferences.listSortDirection, query],
   );
 
   const loadReader = useCallback(async (id: string) => {
@@ -1241,12 +1255,26 @@ function App() {
   const filterLabel =
     filter === "trash"
       ? preferences.locale === "en-US" ? "Trash" : "废纸篓"
+      : filter === "all"
+        ? preferences.locale === "en-US" ? "All" : "全部"
       : filter.startsWith("tag:")
         ? (allTags.find((tag) => `tag:${tag.id}` === filter)?.name ?? "标签")
         : ((preferences.locale === "en-US" ? EN_TIER_LABEL : TIER_LABEL)[filter] ?? "Library");
   const english = preferences.locale === "en-US";
   const selectedAnnotation =
     annotations.find((item) => item.id === selectedAnnotationId) ?? null;
+
+  function changeListSort(sort: ListSort, toggle = false) {
+    const current = preferences.listSort ?? "updated";
+    const direction = preferences.listSortDirection ?? "desc";
+    savePreferences({
+      listSort: sort,
+      listSortDirection:
+        toggle && sort === current
+          ? direction === "asc" ? "desc" : "asc"
+          : sort === "updated" ? "desc" : "asc",
+    });
+  }
 
   function resize(
     key: "navWidth" | "listWidth" | "tocWidth" | "infoWidth",
@@ -1875,6 +1903,19 @@ function App() {
             <aside className="nav-pane">
               <div className="nav-section">
                 <span>LIBRARY</span>
+                <button
+                  className={
+                    workspace === "library" && filter === "all" ? "active" : ""
+                  }
+                  title={english ? "All" : "全部"}
+                  onClick={() => {
+                    setWorkspace("library");
+                    setFilter("all");
+                  }}
+                >
+                  <Library size={17} />
+                  <em>{english ? "All" : "全部"}</em>
+                </button>
                 {TIERS.map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
@@ -1989,25 +2030,47 @@ function App() {
                     清空废纸篓
                   </button>
                 ) : (
-                  <div className="view-toggle">
-                    <button
-                      className={
-                        preferences.listView === "list" ? "active" : ""
-                      }
-                      onClick={() => void savePreferences({ listView: "list" })}
+                  <div className="list-controls">
+                    <select
+                      aria-label="列表排序"
+                      value={preferences.listSort ?? "updated"}
+                      onChange={(event) => changeListSort(event.target.value as ListSort)}
                     >
-                      <List size={16} />
-                    </button>
+                      {SORT_OPTIONS.map((option) => (
+                        <option key={option.key} value={option.key}>{option.label}</option>
+                      ))}
+                    </select>
                     <button
-                      className={
-                        preferences.listView === "table" ? "active" : ""
-                      }
-                      onClick={() =>
-                        void savePreferences({ listView: "table" })
-                      }
+                      className="sort-direction"
+                      aria-label={(preferences.listSortDirection ?? "desc") === "asc" ? "切换为降序" : "切换为升序"}
+                      title={(preferences.listSortDirection ?? "desc") === "asc" ? "升序" : "降序"}
+                      onClick={() => changeListSort(preferences.listSort ?? "updated", true)}
                     >
-                      <Table2 size={16} />
+                      <ArrowUpDown size={15} />
+                      <span>{(preferences.listSortDirection ?? "desc") === "asc" ? "升" : "降"}</span>
                     </button>
+                    <div className="view-toggle">
+                      <button
+                        className={
+                          preferences.listView === "list" ? "active" : ""
+                        }
+                        onClick={() => void savePreferences({ listView: "list" })}
+                        aria-label="列表视图"
+                      >
+                        <List size={16} />
+                      </button>
+                      <button
+                        className={
+                          preferences.listView === "table" ? "active" : ""
+                        }
+                        onClick={() =>
+                          void savePreferences({ listView: "table" })
+                        }
+                        aria-label="表格视图"
+                      >
+                        <Table2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2103,6 +2166,10 @@ function App() {
                       selectedIds={selectedIds}
                       select={selectDocument}
                       openMenu={openDocumentMenu}
+                      sort={preferences.listSort ?? "updated"}
+                      sortDirection={preferences.listSortDirection ?? "desc"}
+                      changeSort={(sort) => changeListSort(sort, true)}
+                      moveToTrash={(item) => void trash(item.id)}
                       editTags={editDocumentTags}
                       save={(item, patch) => {
                         setReader(
@@ -3305,6 +3372,10 @@ function DocumentTable({
   selectedIds,
   select,
   openMenu,
+  sort,
+  sortDirection,
+  changeSort,
+  moveToTrash,
   editTags,
   save,
 }: {
@@ -3316,6 +3387,10 @@ function DocumentTable({
     item: ReaderListItem,
     event: React.MouseEvent | React.KeyboardEvent,
   ): void;
+  sort: ListSort;
+  sortDirection: SortDirection;
+  changeSort(sort: ListSort): void;
+  moveToTrash(item: ReaderListItem): void;
   editTags(item: ReaderListItem, tags: string[]): Promise<boolean>;
   save(
     item: ReaderListItem,
@@ -3340,11 +3415,11 @@ function DocumentTable({
   return (
     <div className="document-table" role="table">
       <div className="document-table-head" role="row">
-        <div role="columnheader">标题</div>
-        <div role="columnheader">层级</div>
+        <SortHeader label="标题" value="title" sort={sort} direction={sortDirection} change={changeSort} />
+        <SortHeader label="层级" value="status" sort={sort} direction={sortDirection} change={changeSort} />
         <div role="columnheader">标签</div>
-        <div role="columnheader">收藏</div>
-        <div role="columnheader">更新时间</div>
+        <SortHeader label="更新时间" value="updated" sort={sort} direction={sortDirection} change={changeSort} />
+        <div role="columnheader">操作</div>
       </div>
       <div className="document-table-body" role="rowgroup">
         {documents.map((item) => (
@@ -3417,23 +3492,45 @@ function DocumentTable({
                 <span className="empty">+ 添加标签</span>
               )}
             </div>
-            <div role="cell">
+            <div role="cell">{formatDate(item.updatedAt ?? item.fetchedAt)}</div>
+            <div role="cell" className="document-table-actions">
               <button
+                title="移到废纸篓"
+                aria-label={`将 ${item.title || "无标题内容"} 移到废纸篓`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  save(item, { favorite: !item.favorite });
+                  moveToTrash(item);
                 }}
               >
-                <Star
-                  size={15}
-                  fill={item.favorite ? "currentColor" : "none"}
-                />
+                <Trash2 size={15} />
               </button>
             </div>
-            <div role="cell">{formatDate(item.fetchedAt)}</div>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function SortHeader({
+  label,
+  value,
+  sort,
+  direction,
+  change,
+}: {
+  label: string;
+  value: ListSort;
+  sort: ListSort;
+  direction: SortDirection;
+  change(value: ListSort): void;
+}) {
+  const active = sort === value;
+  return (
+    <div role="columnheader" aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button className={active ? "active" : ""} onClick={() => change(value)}>
+        {label}{active && <span>{direction === "asc" ? "↑" : "↓"}</span>}
+      </button>
     </div>
   );
 }

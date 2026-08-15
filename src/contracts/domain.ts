@@ -4,6 +4,7 @@ export type ReaderListOptions = {
   filter?: string;
   query?: string;
   sort?: "updated" | "title" | "duration" | "status";
+  sortDirection?: "asc" | "desc";
   limit?: number;
   offset?: number;
 };
@@ -106,6 +107,8 @@ export type ReaderPreferences = {
   contentWidth: number;
   pageMargin: number;
   listView: "list" | "table";
+  listSort?: NonNullable<ReaderListOptions["sort"]>;
+  listSortDirection?: NonNullable<ReaderListOptions["sortDirection"]>;
   customFontUrl?: string;
   customFontName?: string;
   sidebarCollapsed?: boolean;

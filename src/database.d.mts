@@ -30,6 +30,7 @@ export type DocumentListOptions = {
   filter?: string;
   query?: string;
   sort?: "updated" | "title" | "duration" | "status";
+  sortDirection?: "asc" | "desc";
   limit?: number;
   offset?: number;
 };
