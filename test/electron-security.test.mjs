@@ -90,6 +90,17 @@ test("custom window controls stay behind the trusted invoke bridge", () => {
   }
 });
 
+test("diagnostic actions stay behind the trusted invoke bridge", () => {
+  for (const channel of [
+    "app:export-logs",
+    "app:open-data-directory",
+    "app:copy-diagnostics",
+  ]) {
+    assert.match(mainSource, new RegExp(`ipcMain\\.handle\\("${channel}"`));
+    assert.match(preloadSource, new RegExp(`ipcRenderer\\.invoke\\("${channel}"`));
+  }
+});
+
 test("detail headers do not cover window controls with draggable regions", () => {
   assert.doesNotMatch(
     rendererCss,

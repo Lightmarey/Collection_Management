@@ -3,6 +3,8 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
+  dialog,
   ipcMain,
   Menu,
   nativeTheme,
@@ -22,6 +24,7 @@ import { LocalMediaStore } from "./adapters/local-media-store";
 import { runtimeDataRoot } from "./portable-paths.mjs";
 import { DataBackupService } from "./services/data-backup-service";
 import { registerBackupIpc } from "./transports/electron/register-backup-ipc";
+import { appendAppLog, exportAppLogs } from "./app-log.mjs";
 
 const smokeMode =
   process.env.KNOWLEDGE_SMOKE === "1" || process.argv.includes("--smoke");
@@ -36,6 +39,7 @@ const dataRoot = runtimeDataRoot({
 let mainWindow: BrowserWindow | null = null;
 let database: KnowledgeDatabase | null = null;
 let databaseStartupError = "database_unavailable";
+const logDirectory = path.join(dataRoot, "logs");
 
 app.setPath("userData", dataRoot);
 protocol.registerSchemesAsPrivileged([
@@ -46,7 +50,48 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 function log(event: string, details: Record<string, unknown> = {}) {
-  console.log(JSON.stringify(sanitizeForLog({ event, ...details })));
+  const entry = sanitizeForLog({
+    at: new Date().toISOString(),
+    event,
+    ...details,
+  }) as Record<string, unknown>;
+  console.log(JSON.stringify(entry));
+  try {
+    appendAppLog(logDirectory, entry);
+  } catch {
+    console.error("Application log could not be written");
+  }
+}
+
+function distributionMode() {
+  if (!app.isPackaged) return "development";
+  return path.resolve(dataRoot) ===
+    path.resolve(path.dirname(process.execPath), "data")
+    ? "portable"
+    : "installed";
+}
+
+function diagnosticInfo() {
+  return {
+    version: app.getVersion(),
+    distribution: distributionMode(),
+    platform: `${process.platform}-${process.arch}`,
+    database: database
+      ? `ok (schema ${database.schemaVersion})`
+      : databaseStartupError,
+    dataPath: dataRoot,
+  };
+}
+
+function diagnosticText() {
+  const info = diagnosticInfo();
+  return [
+    `Reader ${info.version}`,
+    `模式：${info.distribution}`,
+    `平台：${info.platform}`,
+    `数据库：${info.database}`,
+    `数据目录：${info.dataPath}`,
+  ].join("\n");
 }
 
 function isTrusted(sender: Electron.WebContents) {
@@ -125,7 +170,48 @@ function registerAppIpc() {
       version: app.getVersion(),
       packaged: app.isPackaged,
       updateConfigured: true,
+      distribution: distributionMode(),
+      dataPath: dataRoot,
+      database: database
+        ? { ok: true, schemaVersion: database.schemaVersion }
+        : { ok: false, error: databaseStartupError },
     };
+  });
+  ipcMain.handle("app:export-logs", async (event) => {
+    assertTrusted(event.sender);
+    if (!mainWindow) return { ok: false, error: "window_unavailable" };
+    const selected = await dialog.showSaveDialog(mainWindow, {
+      title: "导出诊断日志",
+      defaultPath: path.join(
+        app.getPath("documents"),
+        `knowledge-management-diagnostics-${new Date().toISOString().slice(0, 10)}.jsonl`,
+      ),
+      filters: [{ name: "JSON Lines", extensions: ["jsonl"] }],
+    });
+    if (selected.canceled || !selected.filePath)
+      return { ok: true, cancelled: true };
+    try {
+      const result = exportAppLogs(
+        logDirectory,
+        selected.filePath,
+        sanitizeForLog({ at: new Date().toISOString(), ...diagnosticInfo() }) as Record<string, unknown>,
+      );
+      log("diagnostic-log-exported", { files: result.files });
+      return { ok: true, ...result };
+    } catch {
+      log("diagnostic-log-export-failed");
+      return { ok: false, error: "log_export_failed" };
+    }
+  });
+  ipcMain.handle("app:open-data-directory", async (event) => {
+    assertTrusted(event.sender);
+    const error = await shell.openPath(dataRoot);
+    return error ? { ok: false, error: "open_data_directory_failed" } : { ok: true };
+  });
+  ipcMain.handle("app:copy-diagnostics", (event) => {
+    assertTrusted(event.sender);
+    clipboard.writeText(diagnosticText());
+    return { ok: true };
   });
   ipcMain.handle("app:check-update", async (event) => {
     assertTrusted(event.sender);
@@ -178,6 +264,11 @@ function registerAppIpc() {
     )
       return { ok: false, error: "update_url_invalid" };
     await shell.openExternal(url);
+    return { ok: true };
+  });
+  ipcMain.handle("app:open-project", async (event) => {
+    assertTrusted(event.sender);
+    await shell.openExternal("https://github.com/Lightmarey/Collection_Management");
     return { ok: true };
   });
   ipcMain.handle("app:window-minimize", (event) => {

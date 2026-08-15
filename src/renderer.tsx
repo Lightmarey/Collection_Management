@@ -13,6 +13,7 @@ import {
   Bookmark,
   Check,
   ChevronDown,
+  CircleHelp,
   Columns3,
   Copy,
   Expand,
@@ -163,7 +164,15 @@ type DocumentMenuState = {
   y: number;
   mode: "main" | "tier" | "tags";
 };
-type SettingsSection = "general" | "shortcuts" | "data" | "about";
+type SettingsSection = "general" | "shortcuts" | "data" | "help" | "about";
+type AppInfo = {
+  version: string;
+  packaged: boolean;
+  updateConfigured: boolean;
+  distribution: "development" | "portable" | "installed";
+  dataPath: string;
+  database: { ok: boolean; schemaVersion?: number; error?: string };
+};
 
 function buildToc(items: Array<Omit<TocItem, "children">>) {
   const roots: TocItem[] = [];
@@ -259,11 +268,7 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<
     SettingsSection
   >("general");
-  const [appInfo, setAppInfo] = useState<{
-    version: string;
-    packaged: boolean;
-    updateConfigured: boolean;
-  } | null>(null);
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState("");
   const [backupStatus, setBackupStatus] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -1188,6 +1193,46 @@ function App() {
     window.location.reload();
   }
 
+  async function exportDiagnosticLogs() {
+    setBackupStatus("正在导出诊断日志…");
+    const result = await window.desktop.exportDiagnosticLogs();
+    setBackupStatus(
+      result.cancelled
+        ? "已取消导出"
+        : result.ok
+          ? `诊断日志已导出：${result.path}`
+          : `日志导出失败：${result.error ?? "log_export_failed"}`,
+    );
+  }
+
+  async function openDataDirectory() {
+    const result = await window.desktop.openDataDirectory();
+    if (!result.ok)
+      setBackupStatus(`无法打开数据目录：${result.error ?? "unknown"}`);
+  }
+
+  async function copyDiagnosticInfo() {
+    const result = await window.desktop.copyDiagnosticInfo();
+    setBackupStatus(result.ok ? "诊断信息已复制" : "复制诊断信息失败");
+  }
+
+  function resetLayout() {
+    setSidebarCollapsed(false);
+    setTocHidden(false);
+    setInfoHidden(false);
+    setRightTab("body");
+    savePreferences({
+      sidebarCollapsed: false,
+      tocHidden: false,
+      infoHidden: false,
+      rightTab: "body",
+      navWidth: DEFAULT_PREFS.navWidth,
+      listWidth: DEFAULT_PREFS.listWidth,
+      tocWidth: DEFAULT_PREFS.tocWidth,
+      infoWidth: DEFAULT_PREFS.infoWidth,
+    });
+  }
+
   async function checkUpdates() {
     setUpdateStatus("正在检查…");
     const result = await window.desktop.checkForUpdates();
@@ -1425,7 +1470,7 @@ function App() {
     },
     {
       id: "settings",
-      title: "打开设置",
+      title: "打开设置与帮助",
       category: "全局",
       run: () => setWorkspace("settings"),
     },
@@ -2021,11 +2066,11 @@ function App() {
                 <button
                   className={workspace === "settings" ? "active" : ""}
                   onClick={() => setWorkspace("settings")}
-                  aria-label="设置"
-                  title="设置"
+                  aria-label="设置与帮助"
+                  title="设置与帮助"
                 >
                   <Settings size={17} />
-                  <em>{english ? "Settings" : "设置"}</em>
+                  <em>{english ? "Settings & help" : "设置与帮助"}</em>
                 </button>
               </div>
             </aside>
@@ -2368,6 +2413,10 @@ function App() {
                   checkUpdates={checkUpdates}
                   createBackup={createBackup}
                   restoreBackup={restoreBackup}
+                  exportDiagnosticLogs={exportDiagnosticLogs}
+                  openDataDirectory={openDataDirectory}
+                  copyDiagnosticInfo={copyDiagnosticInfo}
+                  resetLayout={resetLayout}
                 />
               )}
             </section>
@@ -2387,7 +2436,14 @@ function App() {
               <X size={16} />
             </button>
           </header>
-          <SyncCenter sync={sourceSync} />
+          <SyncCenter
+            sync={sourceSync}
+            showHelp={() => {
+              setSyncPanelOpen(false);
+              setWorkspace("settings");
+              setSettingsSection("help");
+            }}
+          />
         </div>
       )}
       {commandOverlay && (
@@ -2710,11 +2766,12 @@ function SettingsNavigation({
     ["general", english ? "General" : "通用", Settings],
     ["shortcuts", english ? "Shortcuts" : "快捷键", Keyboard],
     ["data", english ? "Data & backup" : "数据与备份", Archive],
+    ["help", english ? "Help" : "帮助", CircleHelp],
     ["about", english ? "About & updates" : "关于与更新", Info],
   ] as const;
   return (
     <>
-      <div className="list-toolbar"><div><small>READER</small><h1>{english ? "Settings" : "设置"}</h1></div></div>
+      <div className="list-toolbar"><div><small>READER</small><h1>{english ? "Settings & help" : "设置与帮助"}</h1></div></div>
       <nav className="settings-navigation">
         {items.map(([key, label, Icon]) => (
           <button key={key} className={selected === key ? "selected" : ""} onClick={() => select(key)}>
@@ -2738,18 +2795,26 @@ function SettingsPage({
   checkUpdates,
   createBackup,
   restoreBackup,
+  exportDiagnosticLogs,
+  openDataDirectory,
+  copyDiagnosticInfo,
+  resetLayout,
 }: {
   section: SettingsSection;
   preferences: ReaderPreferences;
   savePreferences(patch: Partial<ReaderPreferences>): void;
   commands: AppCommand[];
   tags: ReaderTag[];
-  appInfo: { version: string; packaged: boolean; updateConfigured: boolean } | null;
+  appInfo: AppInfo | null;
   updateStatus: string;
   backupStatus: string;
   checkUpdates(): void;
   createBackup(): void;
   restoreBackup(): void;
+  exportDiagnosticLogs(): void;
+  openDataDirectory(): void;
+  copyDiagnosticInfo(): void;
+  resetLayout(): void;
 }) {
   const english = preferences.locale === "en-US";
   const copy = (zh: string, en: string) => (english ? en : zh);
@@ -2792,6 +2857,13 @@ function SettingsPage({
               />
             </label>
           </section>
+          <section className="settings-card backup-card">
+            <div>
+              <b>{copy("界面布局", "Interface layout")}</b>
+              <p>{copy("恢复侧栏、目录栏、信息栏和面板宽度的默认状态。", "Restore default sidebars, panels, and panel widths.")}</p>
+              <button onClick={resetLayout}>{copy("重置界面布局", "Reset interface layout")}</button>
+            </div>
+          </section>
         </>
       )}
       {section === "data" && (
@@ -2800,6 +2872,11 @@ function SettingsPage({
           <section className="settings-card backup-card">
             <div><b>{copy("创建完整备份", "Create a complete backup")}</b><p>{copy("保存正文、层级、标签、标注、批注、阅读位置、设置和本地图片。", "Save documents, tiers, tags, annotations, reading positions, preferences, and local images.")}</p><button onClick={createBackup}>{copy("创建备份", "Create backup")}</button></div>
             <div><b>{copy("从备份恢复", "Restore from backup")}</b><p>{copy("恢复前自动保存当前数据库安全副本。现有数据库会被所选备份替换。", "A safety copy is made before the selected backup replaces the current database.")}</p><button onClick={restoreBackup}>{copy("选择备份并恢复", "Choose backup and restore")}</button></div>
+          </section>
+          <section className="settings-card backup-card">
+            <div><b>{copy("导出诊断日志", "Export diagnostic logs")}</b><p>{copy("导出应用生命周期和错误日志。Cookie、正文、请求签名和查询参数会被排除或脱敏。", "Export lifecycle and error logs. Cookies, document bodies, signatures, and query parameters are excluded or redacted.")}</p><button onClick={exportDiagnosticLogs}>{copy("导出日志", "Export logs")}</button></div>
+            <div><b>{copy("数据目录", "Data directory")}</b><p className="data-path">{appInfo?.dataPath ?? "…"}</p><button onClick={openDataDirectory}>{copy("打开数据目录", "Open data directory")}</button></div>
+            <div><b>{copy("诊断信息", "Diagnostic information")}</b><p>{copy("复制版本、运行模式、平台、数据库状态和数据目录，不包含私人内容。", "Copy version, distribution, platform, database status, and data directory without private content.")}</p><button onClick={copyDiagnosticInfo}>{copy("复制诊断信息", "Copy diagnostics")}</button></div>
           </section>
           {backupStatus && <p className="settings-result">{backupStatus}</p>}
         </>
@@ -2812,15 +2889,48 @@ function SettingsPage({
           savePreferences={savePreferences}
         />
       )}
+      {section === "help" && (
+        <>
+          <header><small>{copy("帮助", "Help")}</small><h1>{copy("使用方式与错误说明", "Behavior & error guide")}</h1><p>{copy("Reader 将远程收藏下载到本地，帮助你阅读、整理并清空待处理内容。", "Reader downloads remote saves locally so you can read, organize, and clear the backlog.")}</p></header>
+          <section className="settings-card help-card">
+            <div>
+              <h2>{copy("从导入到内化", "From import to learning")}</h2>
+              <ul>
+                <li>{copy("所有新内容统一进入收件箱，再移动到短期、中期、长期或归档。", "All new content enters Inbox, then moves to Short, Medium, Long, or Archive.")}</li>
+                <li>{copy("来源用于收件箱筛选；多个标签同时选择时取交集。", "Sources filter Inbox; selecting multiple tags uses intersection semantics.")}</li>
+                <li>{copy("正文下载后保存在本地。取消远程收藏不会删除本地正文。", "Downloaded documents stay local. Removing a remote favorite does not delete the local copy.")}</li>
+                <li>{copy("永久删除可选择先取消可写的知乎收藏；远程结果不明确时，条目会保留在废纸篓。", "Permanent deletion can first remove writable Zhihu memberships; items remain in Trash when the remote result is uncertain.")}</li>
+                <li>{copy("支持回答、文章和 Pin；zvideo 不支持，会跳过该条而不中止批量任务。", "Answers, articles, and Pins are supported. zvideo is skipped without stopping the batch.")}</li>
+              </ul>
+            </div>
+            <div>
+              <h2>{copy("常见同步错误", "Common sync errors")}</h2>
+              <dl className="help-errors">
+                <div><dt>HTTP 401</dt><dd>{copy("登录状态失效；重新登录知乎后继续。", "The session expired; sign in to Zhihu again.")}</dd></div>
+                <div><dt>HTTP 403</dt><dd>{copy("无权限、付费内容或知乎风控；在官方页面确认。", "Permission, paid-content, or risk-control response; verify on the official page.")}</dd></div>
+                <div><dt>HTTP 404</dt><dd>{copy("内容不存在。取消收藏时应用会重新检查收藏夹，不能确认就不会当作成功。", "Content was not found. Remote cleanup rechecks the collection and does not claim success when uncertain.")}</dd></div>
+                <div><dt>HTTP 429</dt><dd>{copy("请求过于频繁；等待一段时间后重试。", "Too many requests; wait before retrying.")}</dd></div>
+                <div><dt>HTTP 599</dt><dd>{copy("应用内部状态码：请求超时或未取得响应，并非知乎返回的正式 HTTP 状态。检查网络后重试。", "An internal status: the request timed out or received no response. It is not an HTTP status returned by Zhihu.")}</dd></div>
+                <div><dt>captcha</dt><dd>{copy("需要在知乎窗口完成安全验证。", "Complete the security check in the Zhihu window.")}</dd></div>
+                <div><dt>unsupported_content</dt><dd>{copy("内容类型不支持；只跳过当前条目。", "The content type is unsupported; only that item is skipped.")}</dd></div>
+                <div><dt>structure_changed</dt><dd>{copy("知乎返回结构可能改变；检查软件更新并导出日志。", "Zhihu's response shape may have changed; check for updates and export logs.")}</dd></div>
+                <div><dt>paid_or_no_permission</dt><dd>{copy("付费或无权访问，无法下载正文。", "Paid or inaccessible content cannot be downloaded.")}</dd></div>
+              </dl>
+            </div>
+          </section>
+        </>
+      )}
       {section === "about" && (
         <>
           <header><small>{copy("关于", "About")}</small><h1>Reader</h1><p>{copy("本地优先的知识下载与阅读工具。", "A local-first knowledge capture and reading tool.")}</p></header>
           <section className="settings-card about-card">
             <dl>
               <div><dt>{copy("版本", "Version")}</dt><dd>{appInfo?.version ?? "…"}</dd></div>
-              <div><dt>{copy("分发模式", "Distribution")}</dt><dd>{appInfo?.packaged ? copy("已打包应用", "Packaged app") : copy("开发模式", "Development mode")}</dd></div>
+              <div><dt>{copy("分发模式", "Distribution")}</dt><dd>{appInfo?.distribution ?? "…"}</dd></div>
+              <div><dt>{copy("许可证", "License")}</dt><dd>AGPL-3.0-only</dd></div>
             </dl>
             <button onClick={checkUpdates}>{copy("检查更新", "Check for updates")}</button>
+            <button onClick={() => void window.desktop.openProjectPage()}>{copy("项目主页", "Project homepage")}</button>
             {updateStatus && <p className="settings-result">{updateStatus}</p>}
           </section>
         </>
@@ -4140,7 +4250,13 @@ function SyncMini({
     </div>
   );
 }
-function SyncCenter({ sync }: { sync: ReturnType<typeof useSourceSync> }) {
+function SyncCenter({
+  sync,
+  showHelp,
+}: {
+  sync: ReturnType<typeof useSourceSync>;
+  showHelp(): void;
+}) {
   const job = sync.job;
   if (!job) return <Empty text="还没有同步任务" />;
   const p = sync.progress;
@@ -4201,7 +4317,12 @@ function SyncCenter({ sync }: { sync: ReturnType<typeof useSourceSync> }) {
         </div>
       )}
       {sync.failures.length > 0 && (
-        <ul className="sync-errors">
+        <div className="sync-errors-block">
+          <div className="sync-errors-header">
+            <b>失败条目</b>
+            <button onClick={showHelp}>查看错误说明</button>
+          </div>
+          <ul className="sync-errors">
           {sync.failures.map((item) => (
             <li key={item.externalId}>
               <a
@@ -4220,7 +4341,8 @@ function SyncCenter({ sync }: { sync: ReturnType<typeof useSourceSync> }) {
               </button>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       )}
       {job.payload.remoteCleanup && (
         <p>

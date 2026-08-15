@@ -16,7 +16,19 @@ export type DesktopApi = ReaderClient & {
     version: string;
     packaged: boolean;
     updateConfigured: boolean;
+    distribution: "development" | "portable" | "installed";
+    dataPath: string;
+    database: { ok: boolean; schemaVersion?: number; error?: string };
   }>;
+  exportDiagnosticLogs(): Promise<{
+    ok: boolean;
+    cancelled?: boolean;
+    error?: string;
+    path?: string;
+    files?: number;
+  }>;
+  openDataDirectory(): Promise<{ ok: boolean; error?: string }>;
+  copyDiagnosticInfo(): Promise<{ ok: boolean; error?: string }>;
   checkForUpdates(): Promise<{
     ok: boolean;
     error?: string;
@@ -26,6 +38,7 @@ export type DesktopApi = ReaderClient & {
     downloadUrl?: string | null;
   }>;
   openUpdatePage(url: string): Promise<{ ok: boolean; error?: string }>;
+  openProjectPage(): Promise<{ ok: boolean; error?: string }>;
   createDataBackup(): Promise<{
     ok: boolean;
     cancelled?: boolean;

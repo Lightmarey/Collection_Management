@@ -1020,6 +1020,7 @@ button {
   border-radius: 11px;
   background: var(--surface-raised);
 }
+.settings-card + .settings-card { margin-top: 18px; }
 .settings-card > label {
   display: flex;
   min-height: 76px;
@@ -1048,6 +1049,29 @@ button {
 .backup-card > div:last-child { border-bottom: 0; }
 .about-card { padding: 20px; }
 .about-card dl { margin: 0 0 22px; }
+.about-card button + button { margin-left: 8px; }
+.data-path {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 12px;
+}
+.help-card > div {
+  padding: 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+.help-card > div:last-child { border-bottom: 0; }
+.help-card h2 { margin: 0 0 10px; font-size: 18px; }
+.help-card ul { margin: 0; padding-left: 21px; line-height: 1.7; }
+.help-errors { margin: 0; }
+.help-errors > div {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-color);
+}
+.help-errors dt { font-family: ui-monospace, "Cascadia Code", monospace; }
+.help-errors dd { margin: 0; color: var(--muted-color); line-height: 1.5; }
 .settings-result {
   max-width: 780px;
   margin-bottom: 0;
@@ -2326,6 +2350,17 @@ button {
 .sync-errors {
   padding: 0;
   list-style: none;
+}
+.sync-errors-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+.sync-errors-header button {
+  border: 0;
+  background: transparent;
+  color: #0969da;
 }
 .sync-errors li {
   display: grid;

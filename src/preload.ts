@@ -3,8 +3,12 @@ import type { DesktopApi } from "./contracts/desktop";
 
 const desktop: DesktopApi = {
   getAppInfo: () => ipcRenderer.invoke("app:info"),
+  exportDiagnosticLogs: () => ipcRenderer.invoke("app:export-logs"),
+  openDataDirectory: () => ipcRenderer.invoke("app:open-data-directory"),
+  copyDiagnosticInfo: () => ipcRenderer.invoke("app:copy-diagnostics"),
   checkForUpdates: () => ipcRenderer.invoke("app:check-update"),
   openUpdatePage: (url) => ipcRenderer.invoke("app:open-update", url),
+  openProjectPage: () => ipcRenderer.invoke("app:open-project"),
   createDataBackup: () => ipcRenderer.invoke("backup:create"),
   restoreDataBackup: () => ipcRenderer.invoke("backup:restore"),
   minimizeAppWindow: () => ipcRenderer.invoke("app:window-minimize"),
