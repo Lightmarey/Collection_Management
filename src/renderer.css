@@ -238,6 +238,32 @@ button {
   margin-top: 15px;
   overflow: auto;
 }
+.tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.tags-nav .tag-pill {
+  width: auto;
+  height: 28px;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--surface-raised);
+}
+.tags-nav .tag-pill.active {
+  border-color: var(--accent-color);
+  background: var(--accent-color);
+  box-shadow: none;
+  color: #fff;
+}
+.tags-nav .tag-pill b {
+  margin-left: 0;
+  color: inherit;
+  opacity: 0.7;
+}
 .knowledge-nav {
   margin-top: 10px;
 }
@@ -311,6 +337,20 @@ button {
   padding: 2px;
   border: 1px solid #e1e4e8;
   border-radius: 6px;
+}
+.list-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.source-filter {
+  max-width: 210px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-color);
 }
 .view-toggle button,
 .content-tabs button,
@@ -2185,6 +2225,9 @@ button {
   }
   .nav-pane button {
     justify-content: center !important;
+  }
+  .tags-nav {
+    display: none;
   }
   .sync-mini {
     padding: 4px;

@@ -4,6 +4,7 @@ export type ReaderStore = Pick<
   KnowledgeDatabase,
   | "listDocuments"
   | "listTags"
+  | "listSources"
   | "listAnnotations"
   | "getReaderSession"
   | "getDocument"

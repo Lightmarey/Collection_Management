@@ -50,6 +50,7 @@ import type {
   ReaderAnnotationListItem,
   ReaderListItem,
   ReaderPreferences,
+  ReaderSource,
   ReaderTag,
   SourceOption,
   SyncItem,
@@ -179,6 +180,9 @@ function App() {
   const [query, setQuery] = useState("");
   const [documents, setDocuments] = useState<ReaderListItem[]>([]);
   const [allTags, setAllTags] = useState<ReaderTag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set());
+  const [librarySources, setLibrarySources] = useState<ReaderSource[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [reader, setReader] = useState<ReaderDocument | null>(null);
@@ -318,6 +322,8 @@ function App() {
       if (!quiet) setLoading(true);
       const result = await readerClient.readerBootstrap({
         filter,
+        tagIds: [...selectedTagIds],
+        sourceId: filter === "inbox" ? selectedSourceId : undefined,
         query,
         sort: "updated",
         limit: 10000,
@@ -329,8 +335,17 @@ function App() {
         return;
       }
       const next = result.documents ?? [];
+      const nextTags = result.tags ?? [];
+      const nextSources = result.sources ?? [];
       setDocuments(next);
-      setAllTags(result.tags ?? []);
+      setAllTags(nextTags);
+      setLibrarySources(nextSources);
+      if (selectedSourceId && !nextSources.some((source) => source.id === selectedSourceId)) setSelectedSourceId("");
+      setSelectedTagIds((current) => {
+        const valid = new Set(nextTags.map((tag) => tag.id));
+        const filtered = new Set([...current].filter((id) => valid.has(id)));
+        return filtered.size === current.size ? current : filtered;
+      });
       setSelectedId((current) =>
         current && next.some((item) => item.id === current)
           ? current
@@ -345,7 +360,7 @@ function App() {
       setStatus(`${next.length} 篇本地内容`);
       if (!quiet) setLoading(false);
     },
-    [filter, query],
+    [filter, query, selectedSourceId, selectedTagIds],
   );
 
   const loadReader = useCallback(async (id: string) => {
@@ -1085,9 +1100,9 @@ function App() {
   const filterLabel =
     filter === "trash"
       ? preferences.locale === "en-US" ? "Trash" : "废纸篓"
-      : filter.startsWith("tag:")
-        ? (allTags.find((tag) => `tag:${tag.id}` === filter)?.name ?? "标签")
-        : ((preferences.locale === "en-US" ? EN_TIER_LABEL : TIER_LABEL)[filter] ?? "Library");
+      : ((preferences.locale === "en-US" ? EN_TIER_LABEL : TIER_LABEL)[filter] ?? "Library");
+  const selectedSourceName = librarySources.find((source) => source.id === selectedSourceId)?.name;
+  const listLabel = [filterLabel, selectedSourceName].filter(Boolean).join(" · ");
   const english = preferences.locale === "en-US";
   const selectedAnnotation =
     annotations.find((item) => item.id === selectedAnnotationId) ?? null;
@@ -1581,24 +1596,30 @@ function App() {
               </div>
               <div className="nav-section tags-nav">
                 <span>{english ? "TAGS" : "标签"}</span>
-                {allTags.map((tag) => (
-                  <button
-                    key={tag.id}
-                    className={
-                      workspace === "library" && filter === `tag:${tag.id}`
-                        ? "active"
-                        : ""
-                    }
-                    onClick={() => {
-                      setWorkspace("library");
-                      setFilter(`tag:${tag.id}`);
-                    }}
-                  >
-                    <Tags size={16} />
-                    <em>{tag.name}</em>
-                    <b>{tag.documentCount}</b>
-                  </button>
-                ))}
+                <div className="tag-pills">
+                  {allTags.map((tag) => {
+                    const active = selectedTagIds.has(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        className={`tag-pill${active ? " active" : ""}`}
+                        aria-pressed={active}
+                        onClick={() => {
+                          setWorkspace("library");
+                          setSelectedTagIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(tag.id)) next.delete(tag.id);
+                            else next.add(tag.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <em>{tag.name}</em>
+                        <b>{tag.documentCount}</b>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="nav-section knowledge-nav">
                 <span>{english ? "KNOWLEDGE" : "知识"}</span>
@@ -1664,7 +1685,7 @@ function App() {
               <div className="list-toolbar">
                 <div>
                   <small>LIBRARY</small>
-                  <h1>{filterLabel}</h1>
+                  <h1>{listLabel}</h1>
                 </div>
                 {filter === "trash" ? (
                   <button
@@ -1676,25 +1697,36 @@ function App() {
                     清空废纸篓
                   </button>
                 ) : (
-                  <div className="view-toggle">
-                    <button
-                      className={
-                        preferences.listView === "list" ? "active" : ""
-                      }
-                      onClick={() => void savePreferences({ listView: "list" })}
-                    >
-                      <List size={16} />
-                    </button>
-                    <button
-                      className={
-                        preferences.listView === "table" ? "active" : ""
-                      }
-                      onClick={() =>
-                        void savePreferences({ listView: "table" })
-                      }
-                    >
-                      <Table2 size={16} />
-                    </button>
+                  <div className="list-toolbar-actions">
+                    {filter === "inbox" && librarySources.length > 0 && (
+                      <select
+                        className="source-filter"
+                        aria-label="按来源筛选"
+                        value={selectedSourceId}
+                        onChange={(event) => setSelectedSourceId(event.target.value)}
+                      >
+                        <option value="">{english ? "All sources" : "全部来源"}</option>
+                        {librarySources.map((source) => (
+                          <option key={source.id} value={source.id}>
+                            {source.name} ({source.documentCount})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="view-toggle">
+                      <button
+                        className={preferences.listView === "list" ? "active" : ""}
+                        onClick={() => void savePreferences({ listView: "list" })}
+                      >
+                        <List size={16} />
+                      </button>
+                      <button
+                        className={preferences.listView === "table" ? "active" : ""}
+                        onClick={() => void savePreferences({ listView: "table" })}
+                      >
+                        <Table2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

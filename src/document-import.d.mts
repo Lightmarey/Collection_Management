@@ -15,7 +15,7 @@ export type ParsedDocument = {
 
 export function markdownToHtml(markdown: string): string;
 export function zhihuContentDetailRequest(url: string): {
-  type: 'answer' | 'article';
+  type: 'answer' | 'article' | 'pin';
   id: string;
   url: string;
   include: string;

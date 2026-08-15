@@ -12,6 +12,7 @@ export class ReaderService {
     return {
       documents: this.database.listDocuments(options),
       tags: this.database.listTags(),
+      sources: this.database.listSources(),
       session: this.database.getReaderSession(),
     };
   }

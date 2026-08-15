@@ -61,7 +61,7 @@ export function prepareRetrySyncItem(item = {}) {
 
 export function remoteCleanupCandidate(item = {}, hasCompleteDocument = () => false) {
   const externalId = String(item.externalId ?? '').trim();
-  if (!externalId || !['completed', 'skipped'].includes(item.status)) return null;
+  if (!externalId || !['answer', 'article'].includes(item.kind) || !['completed', 'skipped'].includes(item.status)) return null;
   const documentId = String(item.documentId ?? item.url ?? externalId).trim();
   if (!documentId || !hasCompleteDocument(documentId)) return null;
   return {
@@ -154,8 +154,9 @@ export async function runCollectionSync({
         state.created = result.created === true;
         state.versionCreated = result.versionCreated === true;
       } else {
-        state.status = 'failed';
         state.failureType = failureType(result?.failureType ?? result?.status);
+        state.status = state.failureType === FAILURE_TYPES.UNSUPPORTED_CONTENT ? 'skipped' : 'failed';
+        state.skipped = state.status === 'skipped';
         state.httpStatus = Number.isInteger(result?.httpStatus) ? result.httpStatus : null;
         state.failureStage = typeof result?.failureStage === 'string' ? result.failureStage : null;
         state.failureCode = typeof result?.failureCode === 'string' ? result.failureCode : null;

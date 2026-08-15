@@ -8,6 +8,7 @@ export const FAILURE_TYPES = Object.freeze({
   RATE_LIMITED: "rate_limited",
   CAPTCHA: "captcha",
   UNAVAILABLE: "paid_or_no_permission",
+  UNSUPPORTED_CONTENT: "unsupported_content",
   STRUCTURE_CHANGED: "structure_changed",
   HTTP_ERROR: "http_error",
   STOPPED: "stopped",

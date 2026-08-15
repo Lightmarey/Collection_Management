@@ -51,6 +51,27 @@ test('stops safely when a single response signals login expiry', async () => {
   assert.equal(result.items[1].failureType, FAILURE_TYPES.LOGIN_EXPIRED);
 });
 
+test('skips unsupported content and continues the batch', async () => {
+  const processed = [];
+  const result = await runCollectionSync({
+    capture: async () => ({ ok: true, items: [
+      { externalId: 'video', kind: 'zvideo', url: 'https://www.zhihu.com/zvideo/1', status: 'ok' },
+      { externalId: 'answer', kind: 'answer', url: 'https://www.zhihu.com/question/1/answer/2', status: 'ok' },
+    ] }),
+    fetchDocument: async (item) => {
+      processed.push(item.externalId);
+      return item.kind === 'zvideo'
+        ? { ok: false, failureType: FAILURE_TYPES.UNSUPPORTED_CONTENT }
+        : { ok: true, documentId: item.url };
+    },
+  });
+
+  assert.equal(result.status, SYNC_STATUS.COMPLETED);
+  assert.deepEqual(result.progress, { total: 2, completed: 1, failed: 0, skipped: 1, remaining: 0 });
+  assert.deepEqual(processed, ['video', 'answer']);
+  assert.equal(result.items[0].failureType, FAILURE_TYPES.UNSUPPORTED_CONTENT);
+});
+
 test('skips unchanged items without fetching their正文', async () => {
   let fetched = 0;
   const result = await runCollectionSync({
@@ -122,4 +143,5 @@ test('remote cleanup eligibility resolves skipped remote items to their stored U
   assert.equal(candidate.documentId, 'https://www.zhihu.com/question/1/answer/42');
   assert.equal(remoteCleanupCandidate({ externalId: 'missing', status: 'completed' }, () => false), null);
   assert.equal(remoteCleanupCandidate({ externalId: 'failed', status: 'failed' }, () => true), null);
+  assert.equal(remoteCleanupCandidate({ externalId: 'pin', kind: 'pin', status: 'completed' }, () => true), null);
 });

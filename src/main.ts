@@ -296,7 +296,7 @@ app.on("ready", () => {
       ? new Response(media.bytes as BodyInit, {
           headers: {
             "content-type": media.mimeType,
-            "cache-control": "public, max-age=31536000, immutable",
+            "cache-control": "no-store",
           },
         })
       : new Response("Not found", { status: 404 });

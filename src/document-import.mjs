@@ -8,6 +8,7 @@ export const IMPORT_STATUS = Object.freeze({
   OK: 'ok',
   INVALID_INPUT: 'invalid_input',
   UNSUPPORTED_SOURCE: 'unsupported_source',
+  UNSUPPORTED_CONTENT: FAILURE_TYPES.UNSUPPORTED_CONTENT,
   STRUCTURE_CHANGED: FAILURE_TYPES.STRUCTURE_CHANGED,
   LOGIN_EXPIRED: FAILURE_TYPES.LOGIN_EXPIRED,
   RATE_LIMITED: FAILURE_TYPES.RATE_LIMITED,
@@ -226,13 +227,19 @@ export function zhihuContentDetailRequest(rawUrl) {
     } else if (parsed.hostname === 'www.zhihu.com' && segments[0] === 'appview' && segments[1] === 'p') {
       type = 'article';
       id = segments[2];
+    } else if ((parsed.hostname === 'www.zhihu.com' || parsed.hostname === 'zhihu.com') && segments[0] === 'pin') {
+      type = 'pin';
+      id = segments[1];
+    } else if (parsed.hostname === 'www.zhihu.com' && segments[0] === 'appview' && segments[1] === 'pin') {
+      type = 'pin';
+      id = segments[2];
     }
     if (!type || !/^\d+$/.test(id ?? '')) return null;
     return {
       type,
       id,
-      url: `https://www.zhihu.com/api/v4/${type === 'answer' ? 'answers' : 'articles'}/${id}`,
-      include: type === 'answer' ? ZHIHU_ANSWER_INCLUDE : ZHIHU_ARTICLE_INCLUDE,
+      url: `https://www.zhihu.com/api/v4/${type === 'answer' ? 'answers' : type === 'article' ? 'articles' : 'pins'}/${id}`,
+      include: type === 'answer' ? ZHIHU_ANSWER_INCLUDE : type === 'article' ? ZHIHU_ARTICLE_INCLUDE : 'topics',
     };
   } catch {
     return null;
@@ -287,7 +294,7 @@ export async function importZhihuContent(url, { fetchJson } = {}) {
   const normalized = normalizeUrl(value(url));
   if (!isAllowedZhihuUrl(normalized)) return failureResult(IMPORT_STATUS.UNSUPPORTED_SOURCE, 'unsupported_zhihu_url');
   const request = zhihuContentDetailRequest(normalized);
-  if (!request) return { ...failureResult(IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized };
+  if (!request) return { ...failureResult(IMPORT_STATUS.UNSUPPORTED_CONTENT), source: 'zhihu', externalId: normalized, url: normalized };
   if (typeof fetchJson !== 'function') throw new TypeError('fetchJson is required for Zhihu content detail import');
 
   let response;
@@ -297,14 +304,17 @@ export async function importZhihuContent(url, { fetchJson } = {}) {
     return { ...failureResult(IMPORT_STATUS.HTTP_ERROR), source: 'zhihu', externalId: normalized, url: normalized, httpStatus: null, failureStage: 'document_detail' };
   }
   const payload = response?.payload && typeof response.payload === 'object' ? response.payload : null;
-  const content = typeof payload?.content === 'string' ? payload.content : typeof payload?.editable_content === 'string' ? payload.editable_content : '';
+  const content = typeof payload?.content === 'string' ? payload.content
+    : typeof payload?.editable_content === 'string' ? payload.editable_content
+      : typeof payload?.content_html === 'string' ? payload.content_html
+        : typeof payload?.contentHtml === 'string' ? payload.contentHtml : '';
   if (!content.trim()) {
     const status = classifyFailure({ status: Number(response?.status), body: response?.marker ?? payload ?? '' });
     return { ...failureResult(status ?? IMPORT_STATUS.STRUCTURE_CHANGED), source: 'zhihu', externalId: normalized, url: normalized, httpStatus: Number.isInteger(Number(response?.status)) ? Number(response.status) : null, failureStage: 'document_detail' };
   }
-  const title = value(payload?.title) || value(payload?.question?.title);
+  const title = value(payload?.title) || value(payload?.question?.title) || value(payload?.excerpt_title) || value(payload?.excerptTitle) || (request.type === 'pin' ? '知乎想法' : '');
   const author = value(payload?.author?.name) || value(payload?.question?.author?.name);
-  const publishedAt = detailDate(payload?.created_time ?? payload?.createdTime);
+  const publishedAt = detailDate(payload?.created_time ?? payload?.createdTime ?? payload?.created);
   const parsed = parseDocument({ kind: 'html', content: `<div class="RichContent-inner">${content}</div>`, source: 'zhihu', externalId: normalized, url: normalized, title, author, publishedAt, fetchedAt: response?.fetchedAt });
   return parsed.ok ? parsed : { ...parsed, source: 'zhihu', externalId: normalized, url: normalized };
 }
