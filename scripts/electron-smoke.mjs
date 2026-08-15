@@ -20,7 +20,7 @@ function finish(error) {
     console.error(output.slice(-4000));
     process.exitCode = 1;
   } else {
-    console.log('Electron smoke passed: startup -> IPC ping -> collapsed tags -> library/detail window controls -> close');
+    console.log('Electron smoke passed: startup -> IPC ping -> collapsed tags -> navigation layout -> library/detail window controls -> close');
   }
 }
 

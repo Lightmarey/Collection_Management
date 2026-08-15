@@ -28,6 +28,9 @@ import { appendAppLog, exportAppLogs } from "./app-log.mjs";
 
 const smokeMode =
   process.env.KNOWLEDGE_SMOKE === "1" || process.argv.includes("--smoke");
+const PROJECT_URL = "https://github.com/Lightmarey/Innerse";
+const LATEST_RELEASE_URL =
+  "https://api.github.com/repos/Lightmarey/Innerse/releases/latest";
 const dataRoot = runtimeDataRoot({
   isPackaged: app.isPackaged,
   execPath: process.execPath,
@@ -117,6 +120,9 @@ function createMainWindow() {
     minHeight: 640,
     width: 1360,
     title: "Innerse",
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, "innerse.png")
+      : path.join(app.getAppPath(), "assets", "innerse.png"),
     frame: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#242629" : "#ffffff",
     webPreferences: {
@@ -216,13 +222,10 @@ function registerAppIpc() {
   ipcMain.handle("app:check-update", async (event) => {
     assertTrusted(event.sender);
     try {
-      const response = await fetch(
-        "https://api.github.com/repos/Lightmarey/Collection_Management/releases/latest",
-        {
-          headers: { Accept: "application/vnd.github+json" },
-          signal: AbortSignal.timeout(10_000),
-        },
-      );
+      const response = await fetch(LATEST_RELEASE_URL, {
+        headers: { Accept: "application/vnd.github+json" },
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!response.ok) return { ok: false, error: "update_request_failed" };
       const release = (await response.json()) as {
         tag_name?: unknown;
@@ -260,7 +263,7 @@ function registerAppIpc() {
     assertTrusted(event.sender);
     if (
       typeof url !== "string" ||
-      !/^https:\/\/github\.com\/Lightmarey\/Collection_Management\/releases\//i.test(url)
+      !url.toLowerCase().startsWith(`${PROJECT_URL.toLowerCase()}/releases/`)
     )
       return { ok: false, error: "update_url_invalid" };
     await shell.openExternal(url);
@@ -268,7 +271,7 @@ function registerAppIpc() {
   });
   ipcMain.handle("app:open-project", async (event) => {
     assertTrusted(event.sender);
-    await shell.openExternal("https://github.com/Lightmarey/Collection_Management");
+    await shell.openExternal(PROJECT_URL);
     return { ok: true };
   });
   ipcMain.handle("app:window-minimize", (event) => {
@@ -299,7 +302,13 @@ function registerAppIpc() {
   });
   ipcMain.handle(
     "app:smoke-ready",
-    (event, input?: { readerLoaded?: unknown; hasDocuments?: unknown; windowControls?: unknown; collapsedTags?: unknown }) => {
+    (event, input?: {
+      readerLoaded?: unknown;
+      hasDocuments?: unknown;
+      windowControls?: unknown;
+      collapsedTags?: unknown;
+      navigationLayout?: unknown;
+    }) => {
       assertTrusted(event.sender);
       if (!smokeMode) return false;
       if (input?.windowControls !== true) {
@@ -310,11 +319,16 @@ function registerAppIpc() {
         log("smoke-failed", { check: "collapsed-tags" });
         return false;
       }
+      if (input?.navigationLayout !== true) {
+        log("smoke-failed", { check: "navigation-layout" });
+        return false;
+      }
       const checks = ["startup", "ipc-ping"];
       if (input?.hasDocuments === true && input.readerLoaded === true)
         checks.push("reader-sqlite");
       if (input?.windowControls === true) checks.push("window-controls");
       if (input?.collapsedTags === true) checks.push("collapsed-tags");
+      if (input?.navigationLayout === true) checks.push("navigation-layout");
       checks.push("close");
       log("smoke-passed", { checks });
       setTimeout(() => app.quit(), 25);

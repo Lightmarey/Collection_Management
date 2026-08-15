@@ -264,9 +264,9 @@ button {
   color: #8c959f;
   font-size: 11px;
 }
+.nav-section + .nav-section { margin-top: 12px; }
 .tags-nav {
   max-height: 240px;
-  margin-top: 15px;
   overflow: auto;
 }
 .tag-pills {
@@ -295,9 +295,6 @@ button {
   margin-left: 0;
   color: inherit;
   opacity: 0.7;
-}
-.knowledge-nav {
-  margin-top: 10px;
 }
 .nav-bottom {
   margin-top: auto;
@@ -1091,7 +1088,26 @@ button {
 }
 .about-brand span { color: #e97b61; }
 .about-card dl { margin: 0 0 22px; }
-.about-card button + button { margin-left: 8px; }
+.about-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.about-card .about-update-button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.about-version small {
+  flex-basis: 100%;
+  color: var(--muted-color);
+}
+.about-project-link {
+  width: max-content;
+  color: var(--accent-color);
+  text-underline-offset: 3px;
+}
 .data-path {
   overflow-wrap: anywhere;
   font-family: ui-monospace, "Cascadia Code", monospace;

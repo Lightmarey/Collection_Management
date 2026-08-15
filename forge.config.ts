@@ -10,6 +10,7 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: { unpack: '**/*.node' },
+    extraResource: ['assets/innerse.png'],
     icon: 'assets/innerse',
     ignore: (file) =>
       (file.includes('/node_modules/better-sqlite3/prebuilds/')
@@ -26,7 +27,7 @@ const config: ForgeConfig = {
     new MakerDeb({
       options: {
         maintainer: 'Lightmarey',
-        homepage: 'https://github.com/Lightmarey/Collection_Management',
+        homepage: 'https://github.com/Lightmarey/Innerse',
         categories: ['Office'],
         icon: 'assets/innerse.png',
       },
@@ -34,7 +35,7 @@ const config: ForgeConfig = {
     new MakerRpm({
       options: {
         license: 'AGPL-3.0-only',
-        homepage: 'https://github.com/Lightmarey/Collection_Management',
+        homepage: 'https://github.com/Lightmarey/Innerse',
         categories: ['Office'],
         icon: 'assets/innerse.png',
       },

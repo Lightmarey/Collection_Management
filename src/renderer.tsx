@@ -350,6 +350,17 @@ function App() {
         getComputedStyle(collapsedTagButton).display !== "none" &&
         getComputedStyle(tagPills).display === "none",
       );
+      const navSections = Array.from(
+        document.querySelectorAll<HTMLElement>(".nav-pane > .nav-section"),
+      );
+      const navigationLayout = Boolean(
+        navSections[0]?.classList.contains("knowledge-nav") &&
+          navSections[1]?.querySelector(":scope > span")?.textContent ===
+            "LIBRARY" &&
+          navSections[2]?.classList.contains("tags-nav") &&
+          getComputedStyle(navSections[1]).marginTop === "12px" &&
+          getComputedStyle(navSections[2]).marginTop === "12px",
+      );
       appElement?.classList.toggle("nav-collapsed", wasCollapsed);
       setExpanded(true);
       await new Promise<void>((resolve) =>
@@ -369,6 +380,7 @@ function App() {
         readerLoaded: loaded,
         windowControls,
         collapsedTags,
+        navigationLayout,
       });
     })();
   }, []);
@@ -1976,6 +1988,17 @@ function App() {
         ) : (
           <>
             <aside className="nav-pane">
+              <div className="nav-section knowledge-nav">
+                <span>{english ? "KNOWLEDGE" : "知识"}</span>
+                <button
+                  className={workspace === "annotations" ? "active" : ""}
+                  onClick={() => setWorkspace("annotations")}
+                >
+                  <Highlighter size={17} />
+                  <em>{english ? "Annotations" : "标注与高亮"}</em>
+                  <b>{annotations.length || ""}</b>
+                </button>
+              </div>
               <div className="nav-section">
                 <span>LIBRARY</span>
                 <button
@@ -2054,17 +2077,6 @@ function App() {
                     );
                   })}
                 </div>
-              </div>
-              <div className="nav-section knowledge-nav">
-                <span>{english ? "KNOWLEDGE" : "知识"}</span>
-                <button
-                  className={workspace === "annotations" ? "active" : ""}
-                  onClick={() => setWorkspace("annotations")}
-                >
-                  <Highlighter size={17} />
-                  <em>{english ? "Annotations" : "标注与高亮"}</em>
-                  <b>{annotations.length || ""}</b>
-                </button>
               </div>
               {sourceSync.active && (
                 <SyncMini
@@ -2962,13 +2974,29 @@ function SettingsPage({
               <p>Made with <span aria-label="love">♥</span> by Lightmarey</p>
             </div>
             <dl>
-              <div><dt>{copy("版本", "Version")}</dt><dd>{appInfo?.version ?? "…"}</dd></div>
+              <div>
+                <dt>{copy("版本", "Version")}</dt>
+                <dd className="about-version">
+                  <span>{appInfo?.version ?? "…"}</span>
+                  <button className="about-update-button" onClick={checkUpdates}>
+                    {copy("检查更新", "Check for updates")}
+                  </button>
+                  {updateStatus && <small>{updateStatus}</small>}
+                </dd>
+              </div>
               <div><dt>{copy("分发模式", "Distribution")}</dt><dd>{appInfo?.distribution ?? "…"}</dd></div>
               <div><dt>{copy("许可证", "License")}</dt><dd>AGPL-3.0-only</dd></div>
             </dl>
-            <button onClick={checkUpdates}>{copy("检查更新", "Check for updates")}</button>
-            <button onClick={() => void window.desktop.openProjectPage()}>{copy("项目主页", "Project homepage")}</button>
-            {updateStatus && <p className="settings-result">{updateStatus}</p>}
+            <a
+              className="about-project-link"
+              href="https://github.com/Lightmarey/Innerse"
+              onClick={(event) => {
+                event.preventDefault();
+                void window.desktop.openProjectPage();
+              }}
+            >
+              {copy("项目主页", "Project homepage")}
+            </a>
           </section>
         </>
       )}
