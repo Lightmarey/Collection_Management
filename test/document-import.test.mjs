@@ -71,7 +71,7 @@ test('classifies user-authorized URL failures and structure changes', async () =
   assert.equal((await importUrl('http://www.zhihu.com/question/1/answer/2', { fetchHtml: fetchHtml(200, '') })).status, 'unsupported_source');
 });
 
-test('reads Zhihu answers and articles through the verified content detail API shape', async () => {
+test('reads Zhihu answers, articles, and pins through their content detail API shapes', async () => {
   const answerRequest = zhihuContentDetailRequest('https://www.zhihu.com/question/1/answer/2');
   assert.equal(answerRequest.url, 'https://www.zhihu.com/api/v4/answers/2');
   assert.match(answerRequest.include, /content/);
@@ -105,6 +105,26 @@ test('reads Zhihu answers and articles through the verified content detail API s
   assert.equal(article.status, 'ok');
   assert.equal(article.document.title, 'Article title');
 
+  const pinRequest = zhihuContentDetailRequest('https://www.zhihu.com/pin/2068484030253871407?native=0');
+  assert.deepEqual(pinRequest, {
+    type: 'pin',
+    id: '2068484030253871407',
+    url: 'https://www.zhihu.com/api/v4/pins/2068484030253871407',
+    include: 'topics',
+  });
+  const pin = await importUrl('https://www.zhihu.com/pin/2068484030253871407?native=0', {
+    fetchJson: async () => ({ status: 200, marker: 'none', payload: {
+      excerpt_title: 'Pin title',
+      author: { name: 'Pin author' },
+      created: 1_754_880_000,
+      content_html: '<p>Pin body</p>',
+    } }),
+  });
+  assert.equal(pin.status, 'ok');
+  assert.equal(pin.document.title, 'Pin title');
+  assert.equal(pin.document.author, 'Pin author');
+  assert.match(pin.document.body, /Pin body/);
+
   const accessiblePaid = await importUrl('https://zhuanlan.zhihu.com/p/124', {
     fetchJson: async () => ({ status: 200, marker: 'paid_or_no_permission', payload: { title: 'Accessible paid article', is_paid: true, content: '<p>Entitled body</p>' } }),
   });
@@ -117,6 +137,13 @@ test('reads Zhihu answers and articles through the verified content detail API s
   assert.equal(unavailablePaid.status, 'paid_or_no_permission');
   assert.equal(unavailablePaid.httpStatus, 403);
   assert.equal(unavailablePaid.failureStage, 'document_detail');
+
+  let requested = false;
+  const zvideo = await importUrl('https://www.zhihu.com/zvideo/1345074447276109824', {
+    fetchJson: async () => { requested = true; },
+  });
+  assert.equal(zvideo.status, 'unsupported_content');
+  assert.equal(requested, false);
 });
 
 test('records import metadata and errors without replacing the current version', () => {
