@@ -423,7 +423,23 @@ const DEFAULT_READER_PREFERENCES = Object.freeze({
   listWidth: 440,
   tocWidth: 250,
   infoWidth: 330,
+  remoteCleanupOnDelete: false,
+  characterShortcutsEnabled: true,
+  shortcutBindings: {},
+  quickTagSlots: {},
 });
+
+function stringRecord(value, keyPattern, valueLimit = 80) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, item]) =>
+        keyPattern.test(key) &&
+        typeof item === "string" &&
+        item.length <= valueLimit,
+    ),
+  );
+}
 
 export class DatabaseError extends Error {
   constructor(message, code = "DATABASE_ERROR", options = {}) {
@@ -2163,6 +2179,22 @@ export class KnowledgeDatabase {
         300,
         Math.min(520, Number(input.infoWidth ?? current.infoWidth)),
       ),
+      remoteCleanupOnDelete:
+        typeof input.remoteCleanupOnDelete === "boolean"
+          ? input.remoteCleanupOnDelete
+          : current.remoteCleanupOnDelete,
+      characterShortcutsEnabled:
+        typeof input.characterShortcutsEnabled === "boolean"
+          ? input.characterShortcutsEnabled
+          : current.characterShortcutsEnabled,
+      shortcutBindings:
+        input.shortcutBindings == null
+          ? current.shortcutBindings
+          : stringRecord(input.shortcutBindings, /^[a-z0-9-]{1,64}$/),
+      quickTagSlots:
+        input.quickTagSlots == null
+          ? current.quickTagSlots
+          : stringRecord(input.quickTagSlots, /^[1-9]$/, 64),
     };
     const updatedAt = now();
     this.db

@@ -450,11 +450,19 @@ test("persists reader typography and view preferences within supported ranges", 
     listWidth: 520,
     tocWidth: 260,
     infoWidth: 340,
+    remoteCleanupOnDelete: true,
+    characterShortcutsEnabled: false,
+    shortcutBindings: { tags: "Mod+t", "bad key": "ignored" },
+    quickTagSlots: { 1: "tag-id", 0: "ignored" },
   });
   assert.equal(preferences.fontSize, 32);
   assert.equal(preferences.lineHeight, 1.3);
   assert.equal(preferences.navWidth, 360);
   assert.equal(preferences.listWidth, 520);
+  assert.equal(preferences.remoteCleanupOnDelete, true);
+  assert.equal(preferences.characterShortcutsEnabled, false);
+  assert.deepEqual(preferences.shortcutBindings, { tags: "Mod+t" });
+  assert.deepEqual(preferences.quickTagSlots, { 1: "tag-id" });
   assert.equal(database.getReaderPreferences().listView, "table");
   const restored = openKnowledgeDatabase(
     path.join(directory, "restored.sqlite"),

@@ -185,6 +185,37 @@ button {
   min-height: 0;
   background: var(--surface);
 }
+.reader-pane:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+.shortcut-prefix {
+  position: fixed;
+  z-index: 1200;
+  bottom: 28px;
+  left: 50%;
+  display: flex;
+  max-width: min(760px, calc(100vw - 32px));
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 32px var(--soft-shadow);
+  transform: translateX(-50%);
+}
+.shortcut-prefix > b,
+.shortcut-prefix > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+  white-space: nowrap;
+}
+.shortcut-prefix small { color: var(--muted-color); }
 .nav-pane {
   display: flex;
   flex-direction: column;

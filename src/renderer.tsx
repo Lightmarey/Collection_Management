@@ -66,6 +66,12 @@ import {
 import { useSourceSync } from "./renderer/use-source-sync";
 import { readerClient } from "./renderer/reader-client";
 import { toggleSelection } from "./renderer/selection-model.mjs";
+import {
+  commandBinding,
+  formatShortcut,
+  resolveShortcut,
+  shortcutStroke,
+} from "./renderer/keyboard-shortcuts.mjs";
 import "lxgw-wenkai-webfont/style.css";
 import "./renderer.css";
 import "./renderer/theme.css";
@@ -105,6 +111,10 @@ const DEFAULT_PREFS: ReaderPreferences = {
   listWidth: 440,
   tocWidth: 250,
   infoWidth: 330,
+  remoteCleanupOnDelete: false,
+  characterShortcutsEnabled: true,
+  shortcutBindings: {},
+  quickTagSlots: {},
 };
 
 function formatDate(value?: string | null, long = false) {
@@ -195,6 +205,13 @@ function App() {
   const [commandOverlay, setCommandOverlay] = useState<
     "commands" | "shortcuts" | null
   >(null);
+  const [readerToolbarOpen, setReaderToolbarOpen] = useState<
+    "type" | "tier" | "tags" | null
+  >(null);
+  const [shortcutPrefix, setShortcutPrefix] = useState("");
+  const [shortcutOptions, setShortcutOptions] = useState<
+    Array<{ id: string; title: string; binding: string }>
+  >([]);
   const [accountState, setAccountState] = useState<boolean | null>(null);
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
@@ -233,6 +250,7 @@ function App() {
   const readerPaneRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
   const syncPanelRef = useRef<HTMLDivElement>(null);
   const commandsRef = useRef<AppCommand[]>([]);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -245,6 +263,7 @@ function App() {
   );
   const pendingPreferences = useRef<Partial<ReaderPreferences>>({});
   const pendingAnnotationText = useRef<string | null>(null);
+  const shortcutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourceSync = useSourceSync();
 
   const loadAnnotations = useCallback(async () => {
@@ -1143,12 +1162,37 @@ function App() {
     setSelectedId(documents[next]?.id ?? null);
   }
 
-  const commands: AppCommand[] = [
+  function toggleTagEditor() {
+    if (!reader) return;
+    if (expanded) {
+      setReaderToolbarOpen((current) => (current === "tags" ? null : "tags"));
+      return;
+    }
+    if (rightTab === "properties") {
+      setRightTab("body");
+      requestAnimationFrame(() => readerPaneRef.current?.focus());
+    } else {
+      setRightTab("properties");
+      requestAnimationFrame(() => tagInputRef.current?.focus());
+    }
+  }
+
+  function scrollReader(direction: -1 | 1, page = false) {
+    const pane = readerPaneRef.current;
+    if (!pane) return;
+    pane.scrollBy({
+      top: direction * (page ? pane.clientHeight * 0.85 : 72),
+      behavior: "smooth",
+    });
+  }
+
+  const commandDefinitions: AppCommand[] = [
     {
       id: "command-palette",
       title: "打开命令面板",
       category: "全局",
-      shortcut: ["Ctrl/Cmd", "K"],
+      defaultBinding: "Mod+k",
+      contexts: ["global"],
       palette: false,
       run: () => setCommandOverlay("commands"),
     },
@@ -1156,7 +1200,8 @@ function App() {
       id: "shortcut-help",
       title: "查看快捷键",
       category: "全局",
-      shortcut: ["?"],
+      defaultBinding: "?",
+      contexts: ["global"],
       palette: false,
       run: () => setCommandOverlay("shortcuts"),
     },
@@ -1164,7 +1209,8 @@ function App() {
       id: "search",
       title: "搜索本地知识",
       category: "全局",
-      shortcut: ["/"],
+      defaultBinding: "/",
+      contexts: ["global"],
       keywords: ["查找"],
       run: () => searchRef.current?.focus(),
     },
@@ -1196,34 +1242,96 @@ function App() {
       run: () => setWorkspace("settings"),
     },
     {
-      id: "next-document",
-      title: "下一篇",
-      category: expanded ? "阅读器" : "Library",
-      shortcut: expanded ? ["J", "↓"] : ["↓"],
+      id: "library-next-document",
+      title: "选择下一篇",
+      category: "Library",
+      defaultBinding: "Down",
+      contexts: ["library"],
       disabledReason: documents.length ? undefined : "没有可选择的文档",
       run: () => selectRelative(1),
     },
     {
-      id: "previous-document",
-      title: "上一篇",
-      category: expanded ? "阅读器" : "Library",
-      shortcut: expanded ? ["K", "↑"] : ["↑"],
+      id: "library-previous-document",
+      title: "选择上一篇",
+      category: "Library",
+      defaultBinding: "Up",
+      contexts: ["library"],
       disabledReason: documents.length ? undefined : "没有可选择的文档",
       run: () => selectRelative(-1),
     },
     {
-      id: "expand-reader",
-      title: expanded ? "退出展开阅读" : "展开阅读",
+      id: "reader-next-document",
+      title: "下一篇",
       category: "阅读器",
-      shortcut: expanded ? ["Esc"] : ["Enter"],
+      defaultBinding: "Right",
+      contexts: ["reader"],
+      disabledReason: documents.length ? undefined : "没有可选择的文档",
+      run: () => selectRelative(1),
+    },
+    {
+      id: "reader-previous-document",
+      title: "上一篇",
+      category: "阅读器",
+      defaultBinding: "Left",
+      contexts: ["reader"],
+      disabledReason: documents.length ? undefined : "没有可选择的文档",
+      run: () => selectRelative(-1),
+    },
+    {
+      id: "reader-scroll-down",
+      title: "向下滚动",
+      category: "阅读器",
+      defaultBinding: "Down",
+      contexts: ["reader"],
+      run: () => scrollReader(1),
+    },
+    {
+      id: "reader-scroll-up",
+      title: "向上滚动",
+      category: "阅读器",
+      defaultBinding: "Up",
+      contexts: ["reader"],
+      run: () => scrollReader(-1),
+    },
+    {
+      id: "reader-page-down",
+      title: "向下翻页",
+      category: "阅读器",
+      defaultBinding: "PageDown",
+      contexts: ["reader"],
+      run: () => scrollReader(1, true),
+    },
+    {
+      id: "reader-page-up",
+      title: "向上翻页",
+      category: "阅读器",
+      defaultBinding: "PageUp",
+      contexts: ["reader"],
+      run: () => scrollReader(-1, true),
+    },
+    {
+      id: "open-reader",
+      title: "展开阅读",
+      category: "阅读器",
+      defaultBinding: "Enter",
+      contexts: ["library"],
       disabledReason: reader ? undefined : "请先选择文档",
-      run: () => setExpanded((value) => !value),
+      run: () => setExpanded(true),
+    },
+    {
+      id: "close-reader",
+      title: "退出展开阅读",
+      category: "阅读器",
+      defaultBinding: "Esc",
+      contexts: ["reader"],
+      run: () => setExpanded(false),
     },
     {
       id: "favorite",
       title: reader?.favorite ? "取消收藏" : "收藏文档",
       category: "文档",
-      shortcut: ["F"],
+      defaultBinding: "f",
+      contexts: ["library", "reader"],
       disabledReason: reader ? undefined : "请先选择文档",
       run: () => reader && saveState({ favorite: !reader.favorite }),
     },
@@ -1231,17 +1339,17 @@ function App() {
       id: "tags",
       title: "编辑标签",
       category: "文档",
-      shortcut: ["T"],
+      defaultBinding: "t",
+      contexts: ["library", "reader"],
       disabledReason: reader ? undefined : "请先选择文档",
-      run: () => {
-        setRightTab("properties");
-        setTagDraft("");
-      },
+      run: toggleTagEditor,
     },
-    ...TIERS.map(({ key, label }) => ({
+    ...TIERS.map(({ key, label }, index) => ({
       id: `tier-${key}`,
       title: `移到${label}`,
       category: "文档",
+      defaultBinding: `c ${index === 0 ? 0 : index}`,
+      contexts: ["library", "reader"] as Array<"library" | "reader">,
       keywords: ["层级", "分类"],
       disabledReason: reader ? undefined : "请先选择文档",
       run: () => reader && saveState({ tier: key }),
@@ -1250,7 +1358,8 @@ function App() {
       id: "open-original",
       title: "打开原文",
       category: "文档",
-      shortcut: ["O"],
+      defaultBinding: "o",
+      contexts: ["library", "reader"],
       disabledReason: reader?.url ? undefined : "当前文档没有来源链接",
       run: () => reader?.url && void window.desktop.openZhihuUrl(reader.url),
     },
@@ -1258,19 +1367,22 @@ function App() {
       id: "delete",
       title: filter === "trash" ? "永久删除" : "移到废纸篓",
       category: "文档",
-      shortcut: ["D"],
+      defaultBinding: "d",
+      contexts: ["library", "reader"],
       disabledReason: reader || selectedIds.size ? undefined : "请先选择文档",
       run: () => {
         if (selectedIds.size)
           void batchRemove(filter === "trash" ? "delete" : "trash");
-        else if (reader) void trash(reader.id);
+        else if (reader)
+          void (filter === "trash" ? permanentDelete(reader.id) : trash(reader.id));
       },
     },
     {
       id: "highlight",
       title: "高亮选区",
       category: "标注",
-      shortcut: ["H"],
+      defaultBinding: "h",
+      contexts: ["library", "reader"],
       disabledReason: selection ? undefined : "请先选择正文",
       run: () => selection && addHighlight("yellow"),
     },
@@ -1278,7 +1390,8 @@ function App() {
       id: "note",
       title: "高亮并批注",
       category: "标注",
-      shortcut: ["N"],
+      defaultBinding: "n",
+      contexts: ["library", "reader"],
       disabledReason: selection ? undefined : "请先选择正文",
       run: () => selection && setNoteOpen(true),
     },
@@ -1286,7 +1399,8 @@ function App() {
       id: "toggle-toc",
       title: tocHidden ? "显示目录栏" : "隐藏目录栏",
       category: "阅读器",
-      shortcut: ["["],
+      defaultBinding: "[",
+      contexts: ["reader"],
       disabledReason: expanded ? undefined : "仅在展开阅读中可用",
       run: () => setTocHidden((value) => !value),
     },
@@ -1294,11 +1408,21 @@ function App() {
       id: "toggle-info",
       title: infoHidden ? "显示信息栏" : "隐藏信息栏",
       category: "阅读器",
-      shortcut: ["]"],
+      defaultBinding: "]",
+      contexts: ["reader"],
       disabledReason: expanded ? undefined : "仅在展开阅读中可用",
       run: () => setInfoHidden((value) => !value),
     },
   ];
+  const commands = commandDefinitions.map((command) => {
+    const binding = command.defaultBinding
+      ? commandBinding(
+          command as AppCommand & { defaultBinding: string; contexts: string[] },
+          preferences.shortcutBindings,
+        )
+      : "";
+    return { ...command, shortcut: binding ? formatShortcut(binding) : undefined };
+  });
   commandsRef.current = commands;
 
   function runCommand(id: string) {
@@ -1309,63 +1433,70 @@ function App() {
   useEffect(() => {
     function keydown(event: KeyboardEvent) {
       if (event.isComposing) return;
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandOverlay("commands");
-        return;
-      }
       if (commandOverlay) {
         if (event.key === "Escape") setCommandOverlay(null);
         return;
       }
+      if (event.key === "Escape" && readerToolbarOpen) {
+        event.preventDefault();
+        setReaderToolbarOpen(null);
+        return;
+      }
       if (isEditing(event.target)) return;
-      if (event.key === "?") {
-        event.preventDefault();
-        setCommandOverlay("shortcuts");
-        return;
-      }
-      if (event.key === "/") {
-        event.preventDefault();
-        runCommand("search");
-        return;
-      }
       if (event.key === "Escape" && syncPanelOpen) {
         setSyncPanelOpen(false);
         return;
       }
-      const key = event.key.toLowerCase();
-      const commandId =
-        event.key === "ArrowDown" || (expanded && key === "j")
-          ? "next-document"
-          : event.key === "ArrowUp" || (expanded && key === "k")
-            ? "previous-document"
-            : event.key === "Enter" || (event.key === "Escape" && expanded)
-              ? "expand-reader"
-              : key === "f"
-                ? "favorite"
-                : key === "t"
-                  ? "tags"
-                  : key === "o"
-                    ? "open-original"
-                    : key === "d" && !expanded
-                      ? "delete"
-                      : key === "h"
-                        ? "highlight"
-                        : key === "n"
-                          ? "note"
-                          : event.key === "["
-                            ? "toggle-toc"
-                            : event.key === "]"
-                              ? "toggle-info"
-                              : null;
-      if (commandId) {
+      const stroke = shortcutStroke(event);
+      if (!stroke) return;
+      const context = expanded
+        ? "reader"
+        : workspace === "settings"
+          ? "settings"
+          : workspace === "annotations"
+            ? "annotations"
+            : "library";
+      const result = resolveShortcut({
+        commands: commandsRef.current.filter(
+          (command): command is AppCommand & {
+            defaultBinding: string;
+            contexts: Array<"global" | "library" | "reader" | "settings" | "annotations">;
+          } => Boolean(command.defaultBinding && command.contexts),
+        ),
+        overrides: preferences.shortcutBindings,
+        context,
+        pending: shortcutPrefix,
+        stroke,
+        characterShortcuts: preferences.characterShortcutsEnabled !== false,
+      });
+      if (result.commandId || result.pending) {
         event.preventDefault();
-        runCommand(commandId);
+        setShortcutPrefix(result.pending);
+        setShortcutOptions(result.options);
+        if (shortcutTimer.current) clearTimeout(shortcutTimer.current);
+        if (result.pending)
+          shortcutTimer.current = setTimeout(() => {
+            setShortcutPrefix("");
+            setShortcutOptions([]);
+          }, 1500);
+        if (result.commandId) runCommand(result.commandId);
+      } else if (shortcutPrefix) {
+        setShortcutPrefix("");
+        setShortcutOptions([]);
       }
     }
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [commandOverlay, expanded, syncPanelOpen]);
+  }, [
+    commandOverlay,
+    expanded,
+    preferences.characterShortcutsEnabled,
+    preferences.shortcutBindings,
+    readerToolbarOpen,
+    shortcutPrefix,
+    syncPanelOpen,
+    workspace,
+  ]);
 
   return (
     <main
@@ -1378,6 +1509,17 @@ function App() {
         <style>{`@font-face{font-family:ReaderCustom;src:url("${preferences.customFontUrl}")}`}</style>
       )}
       <AppWindowControls />
+      {shortcutPrefix && (
+        <div className="shortcut-prefix" role="status" aria-live="polite">
+          <b>{formatShortcut(shortcutPrefix)}</b>
+          {shortcutOptions.map((option) => (
+            <span key={option.id}>
+              {formatShortcut(option.binding).replace(`${formatShortcut(shortcutPrefix)}  `, "")}
+              <small>{option.title}</small>
+            </span>
+          ))}
+        </div>
+      )}
       {expanded && (
         <button
           className="detail-info-toggle"
@@ -1503,6 +1645,8 @@ function App() {
               saveState={saveState}
               addTag={addReaderTag}
               removeTag={removeReaderTag}
+              toolbarOpen={readerToolbarOpen}
+              setToolbarOpen={setReaderToolbarOpen}
             />
             {!infoHidden && (
               <ResizeHandle
@@ -1546,6 +1690,7 @@ function App() {
                     trash={() => reader && void trash(reader.id)}
                     removeRemote={removeRemoteMembership}
                     remoteRemovalState={remoteRemovalState}
+                    tagInputRef={tagInputRef}
                   />
                 ) : (
                   <Notes
@@ -1912,6 +2057,8 @@ function App() {
                   saveState={saveState}
                   addTag={addReaderTag}
                   removeTag={removeReaderTag}
+                  toolbarOpen={readerToolbarOpen}
+                  setToolbarOpen={setReaderToolbarOpen}
                 />
               ) : (
                 <Properties
@@ -1935,6 +2082,7 @@ function App() {
                   }
                   removeRemote={removeRemoteMembership}
                   remoteRemovalState={remoteRemovalState}
+                  tagInputRef={tagInputRef}
                   restore={
                     filter === "trash" && reader
                       ? () => void restore(reader.id)
@@ -2655,6 +2803,8 @@ function ReaderPane({
   saveState,
   addTag,
   removeTag,
+  toolbarOpen,
+  setToolbarOpen,
 }: {
   reader: ReaderDocument | null;
   expanded?: boolean;
@@ -2673,6 +2823,8 @@ function ReaderPane({
   saveState(input: { tier?: string; favorite?: boolean }): void;
   addTag(name: string): Promise<boolean>;
   removeTag(tagId: string): void;
+  toolbarOpen: "type" | "tier" | "tags" | null;
+  setToolbarOpen(open: "type" | "tier" | "tags" | null): void;
 }) {
   const [toolbarHidden, setToolbarHidden] = useState(false);
   const [toolbarLocked, setToolbarLocked] = useState(false);
@@ -2701,6 +2853,8 @@ function ReaderPane({
       className={`reader-pane ${expanded ? "expanded-reader" : ""}`}
       ref={paneRef}
       onScroll={handleScroll}
+      tabIndex={0}
+      aria-label="正文阅读区"
     >
       {expanded && (
         <ReaderToolbar
@@ -2716,6 +2870,8 @@ function ReaderPane({
           addTag={addTag}
           removeTag={removeTag}
           onOpenChange={setToolbarLocked}
+          open={toolbarOpen}
+          setOpen={setToolbarOpen}
         />
       )}
       <div className="reader-content">
@@ -2754,6 +2910,8 @@ function ReaderToolbar({
   addTag,
   removeTag,
   onOpenChange,
+  open,
+  setOpen,
 }: {
   reader: ReaderDocument;
   hidden: boolean;
@@ -2767,8 +2925,9 @@ function ReaderToolbar({
   addTag(name: string): Promise<boolean>;
   removeTag(tagId: string): void;
   onOpenChange(open: boolean): void;
+  open: "type" | "tier" | "tags" | null;
+  setOpen(open: "type" | "tier" | "tags" | null): void;
 }) {
-  const [open, setOpen] = useState<"type" | "tier" | "tags" | null>(null);
   const [tagName, setTagName] = useState("");
   const toolbarRef = useRef<HTMLDivElement>(null);
   const tier = TIERS.find((item) => item.key === reader.tier) ?? TIERS[0];
@@ -2883,6 +3042,7 @@ function ReaderToolbar({
                   {!reader.tags.length && <small>尚未添加标签</small>}
                 </div>
                 <input
+                  autoFocus
                   value={tagName}
                   placeholder="搜索或创建标签"
                   onChange={(event) => setTagName(event.target.value)}
@@ -2931,6 +3091,7 @@ function Properties({
   restore,
   removeRemote,
   remoteRemovalState,
+  tagInputRef,
 }: {
   reader: ReaderDocument | null;
   tagDraft: string;
@@ -2943,6 +3104,7 @@ function Properties({
   restore?: () => void;
   removeRemote(): void;
   remoteRemovalState: RemoteRemovalState;
+  tagInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   if (!reader) return <Empty text="选择文档后查看属性" />;
   return (
@@ -2969,6 +3131,7 @@ function Properties({
             </span>
           ))}
           <input
+            ref={tagInputRef}
             value={tagDraft}
             onChange={(event) => setTagDraft(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && addTag()}

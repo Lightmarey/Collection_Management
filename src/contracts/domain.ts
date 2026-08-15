@@ -116,6 +116,10 @@ export type ReaderPreferences = {
   listWidth?: number;
   tocWidth?: number;
   infoWidth?: number;
+  remoteCleanupOnDelete?: boolean;
+  characterShortcutsEnabled?: boolean;
+  shortcutBindings?: Record<string, string>;
+  quickTagSlots?: Record<string, string>;
   updatedAt?: string | null;
 };
 
