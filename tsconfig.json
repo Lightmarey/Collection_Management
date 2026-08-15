@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
-    "types": ["node", "@electron-forge/plugin-vite/forge-vite-env"]
+    "types": ["node", "vite/client", "@electron-forge/plugin-vite/forge-vite-env"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "forge.config.ts", "vite.*.config.mts"]
 }

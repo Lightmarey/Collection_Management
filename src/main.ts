@@ -86,7 +86,7 @@ function diagnosticInfo() {
 function diagnosticText() {
   const info = diagnosticInfo();
   return [
-    `Reader ${info.version}`,
+    `Innerse ${info.version}`,
     `模式：${info.distribution}`,
     `平台：${info.platform}`,
     `数据库：${info.database}`,
@@ -116,7 +116,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 640,
     width: 1360,
-    title: "Knowledge Management",
+    title: "Innerse",
     frame: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#242629" : "#ffffff",
     webPreferences: {
@@ -184,7 +184,7 @@ function registerAppIpc() {
       title: "导出诊断日志",
       defaultPath: path.join(
         app.getPath("documents"),
-        `knowledge-management-diagnostics-${new Date().toISOString().slice(0, 10)}.jsonl`,
+        `innerse-diagnostics-${new Date().toISOString().slice(0, 10)}.jsonl`,
       ),
       filters: [{ name: "JSON Lines", extensions: ["jsonl"] }],
     });

@@ -79,6 +79,7 @@ import {
   shortcutStroke,
   tagTogglePlan,
 } from "./renderer/keyboard-shortcuts.mjs";
+import innerseIcon from "../assets/innerse.png";
 import "lxgw-wenkai-webfont/style.css";
 import "./renderer.css";
 import "./renderer/theme.css";
@@ -1814,7 +1815,7 @@ function App() {
             aria-label="切换导航"
           >
             <Menu size={18} />
-            <b>Reader</b>
+            <b>Innerse</b>
           </button>
           <label className="global-search">
             <Search size={15} />
@@ -2803,7 +2804,7 @@ function SettingsNavigation({
   ] as const;
   return (
     <>
-      <div className="list-toolbar"><div><small>READER</small><h1>{english ? "Settings & help" : "设置与帮助"}</h1></div></div>
+      <div className="list-toolbar"><div><small>INNERSE</small><h1>{english ? "Settings & help" : "设置与帮助"}</h1></div></div>
       <nav className="settings-navigation">
         {items.map(([key, label, Icon]) => (
           <button key={key} className={selected === key ? "selected" : ""} onClick={() => select(key)}>
@@ -2923,7 +2924,7 @@ function SettingsPage({
       )}
       {section === "help" && (
         <>
-          <header><small>{copy("帮助", "Help")}</small><h1>{copy("使用方式与错误说明", "Behavior & error guide")}</h1><p>{copy("Reader 将远程收藏下载到本地，帮助你阅读、整理并清空待处理内容。", "Reader downloads remote saves locally so you can read, organize, and clear the backlog.")}</p></header>
+          <header><small>{copy("帮助", "Help")}</small><h1>{copy("使用方式与错误说明", "Behavior & error guide")}</h1><p>{copy("Innerse 将远程收藏下载到本地，帮助你阅读、整理并清空待处理内容。", "Innerse downloads remote saves locally so you can read, organize, and clear the backlog.")}</p></header>
           <section className="settings-card help-card">
             <div>
               <h2>{copy("从导入到内化", "From import to learning")}</h2>
@@ -2954,8 +2955,12 @@ function SettingsPage({
       )}
       {section === "about" && (
         <>
-          <header><small>{copy("关于", "About")}</small><h1>Reader</h1><p>{copy("本地优先的知识下载与阅读工具。", "A local-first knowledge capture and reading tool.")}</p></header>
+          <header><small>{copy("关于", "About")}</small><h1>Innerse</h1><p>Ingest. Read. Internalize.</p></header>
           <section className="settings-card about-card">
+            <div className="about-brand">
+              <img src={innerseIcon} alt="Innerse" />
+              <p>Made with <span aria-label="love">♥</span> by Lightmarey</p>
+            </div>
             <dl>
               <div><dt>{copy("版本", "Version")}</dt><dd>{appInfo?.version ?? "…"}</dd></div>
               <div><dt>{copy("分发模式", "Distribution")}</dt><dd>{appInfo?.distribution ?? "…"}</dd></div>

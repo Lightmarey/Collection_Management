@@ -58,7 +58,7 @@ export class DataBackupService {
   async create(parentDirectory: string) {
     const directory = path.join(
       path.resolve(parentDirectory),
-      `ReaderBackup-${folderStamp()}`,
+      `InnerseBackup-${folderStamp()}`,
     );
     await fs.mkdir(directory, { recursive: false });
     const backup = this.database.exportJson();

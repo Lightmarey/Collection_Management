@@ -1,8 +1,9 @@
 {
   "name": "knowledge-management",
-  "version": "1.0.0",
-  "description": "Local-first bookmark manager and reader",
-  "author": "Knowledge Management contributors",
+  "productName": "Innerse",
+  "version": "1.1.0",
+  "description": "Local-first reading inbox for turning saved content into understanding",
+  "author": "Lightmarey",
   "license": "AGPL-3.0-only",
   "private": true,
   "main": ".vite/build/main.js",

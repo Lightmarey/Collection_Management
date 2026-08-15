@@ -10,22 +10,25 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: { unpack: '**/*.node' },
+    icon: 'assets/innerse',
     ignore: (file) =>
-      file.includes('/node_modules/better-sqlite3/prebuilds/')
+      (file.includes('/node_modules/better-sqlite3/prebuilds/')
+        && !file.endsWith(`/better-sqlite3/prebuilds/${process.platform}-${process.arch}.node`))
       || (Boolean(file) && !file.startsWith('/.vite') && !file.startsWith('/node_modules')),
   },
   rebuildConfig: {},
   makers: [
     new MakerWix({
-      manufacturer: 'Knowledge Management contributors',
+      manufacturer: 'Lightmarey',
       defaultInstallMode: 'perMachine',
     }, ['win32']),
     new MakerZIP({}, ['win32', 'darwin']),
     new MakerDeb({
       options: {
-        maintainer: 'Knowledge Management contributors',
+        maintainer: 'Lightmarey',
         homepage: 'https://github.com/Lightmarey/Collection_Management',
         categories: ['Office'],
+        icon: 'assets/innerse.png',
       },
     }, ['linux']),
     new MakerRpm({
@@ -33,6 +36,7 @@ const config: ForgeConfig = {
         license: 'AGPL-3.0-only',
         homepage: 'https://github.com/Lightmarey/Collection_Management',
         categories: ['Office'],
+        icon: 'assets/innerse.png',
       },
     }, ['linux']),
   ],

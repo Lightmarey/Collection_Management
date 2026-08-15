@@ -39,7 +39,7 @@ export function registerBackupIpc(options: {
     const window = getWindow();
     if (!window) return { ok: false, error: "window_unavailable" };
     const selected = await dialog.showOpenDialog(window, {
-      title: "选择 Reader 备份文件夹",
+      title: "选择 Innerse 备份文件夹",
       properties: ["openDirectory"],
     });
     if (selected.canceled || !selected.filePaths[0])

@@ -1071,6 +1071,25 @@ button {
 }
 .backup-card > div:last-child { border-bottom: 0; }
 .about-card { padding: 20px; }
+.about-brand {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 14px 0 30px;
+  text-align: center;
+}
+.about-brand img {
+  width: 112px;
+  height: 112px;
+}
+.about-brand p {
+  margin: 0;
+  color: var(--muted-color);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.about-brand span { color: #e97b61; }
 .about-card dl { margin: 0 0 22px; }
 .about-card button + button { margin-left: 8px; }
 .data-path {
