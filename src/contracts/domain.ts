@@ -6,6 +6,7 @@ export type ReaderListOptions = {
   sourceId?: string;
   query?: string;
   sort?: "updated" | "title" | "duration" | "status";
+  sortDirection?: "asc" | "desc";
   limit?: number;
   offset?: number;
 };
@@ -108,6 +109,8 @@ export type ReaderPreferences = {
   contentWidth: number;
   pageMargin: number;
   listView: "list" | "table";
+  listSort?: NonNullable<ReaderListOptions["sort"]>;
+  listSortDirection?: NonNullable<ReaderListOptions["sortDirection"]>;
   customFontUrl?: string;
   customFontName?: string;
   sidebarCollapsed?: boolean;
@@ -118,6 +121,10 @@ export type ReaderPreferences = {
   listWidth?: number;
   tocWidth?: number;
   infoWidth?: number;
+  remoteCleanupOnDelete?: boolean;
+  characterShortcutsEnabled?: boolean;
+  shortcutBindings?: Record<string, string>;
+  quickTagSlots?: Record<string, string>;
   updatedAt?: string | null;
 };
 

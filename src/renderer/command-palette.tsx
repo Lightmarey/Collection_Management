@@ -5,7 +5,9 @@ export type AppCommand = {
   id: string;
   title: string;
   category: string;
-  shortcut?: string[];
+  shortcut?: string;
+  defaultBinding?: string;
+  contexts?: Array<"global" | "library" | "reader" | "settings" | "annotations">;
   keywords?: string[];
   disabledReason?: string;
   palette?: boolean;
@@ -30,8 +32,8 @@ export function CommandPalette({
     const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
     return commands.filter((command) => {
       if (mode === "commands" && command.palette === false) return false;
-      if (mode === "shortcuts" && !command.shortcut?.length) return false;
-      const haystack = [command.title, command.category, ...(command.keywords ?? []), ...(command.shortcut ?? [])]
+      if (mode === "shortcuts" && !command.shortcut) return false;
+      const haystack = [command.title, command.category, ...(command.keywords ?? []), command.shortcut ?? ""]
         .join(" ")
         .toLocaleLowerCase();
       return words.every((word) => haystack.includes(word));
@@ -130,8 +132,8 @@ export function CommandPalette({
                       <b>{command.title}</b>
                       {command.disabledReason && <small>{command.disabledReason}</small>}
                     </span>
-                    {command.shortcut?.length ? (
-                      <kbd>{command.shortcut.join("  ")}</kbd>
+                    {command.shortcut ? (
+                      <kbd>{command.shortcut}</kbd>
                     ) : null}
                   </button>
                 ) : null,

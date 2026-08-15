@@ -461,6 +461,36 @@ test("empties trash in one transaction while preserving shared media", () => {
   closeAndRemove(directory);
 });
 
+test("lists all active tiers and sorts in either direction", () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), { startupBackup: false });
+  const charlie = database.upsertDocument({ source: "fixture", externalId: "sort-c", title: "Charlie", body: "one" });
+  const alpha = database.upsertDocument({ source: "fixture", externalId: "sort-a", title: "Alpha", body: "one two three" });
+  const bravo = database.upsertDocument({ source: "fixture", externalId: "sort-b", title: "Bravo", body: "one two" });
+  database.saveReadingState({ documentId: alpha.documentId, tier: "long" });
+  database.saveReadingState({ documentId: bravo.documentId, tier: "medium" });
+
+  assert.deepEqual(
+    database.listDocuments({ filter: "all", sort: "title", sortDirection: "asc" }).map((item) => item.title),
+    ["Alpha", "Bravo", "Charlie"],
+  );
+  assert.deepEqual(
+    database.listDocuments({ filter: "all", sort: "title", sortDirection: "desc" }).map((item) => item.title),
+    ["Charlie", "Bravo", "Alpha"],
+  );
+  assert.deepEqual(
+    database.listDocuments({ filter: "all", sort: "status", sortDirection: "asc" }).map((item) => item.tier),
+    ["inbox", "medium", "long"],
+  );
+  database.trashDocument(charlie.documentId);
+  assert.deepEqual(
+    database.listDocuments({ filter: "all", sort: "title" }).map((item) => item.title),
+    ["Alpha", "Bravo"],
+  );
+  database.close();
+  closeAndRemove(directory);
+});
+
 test("persists reader typography and view preferences within supported ranges", () => {
   const directory = tempDirectory();
   const database = openKnowledgeDatabase(
@@ -474,16 +504,28 @@ test("persists reader typography and view preferences within supported ranges", 
     contentWidth: 800,
     pageMargin: 72,
     listView: "table",
+    listSort: "title",
+    listSortDirection: "asc",
     navWidth: 400,
     listWidth: 520,
     tocWidth: 260,
     infoWidth: 340,
+    remoteCleanupOnDelete: true,
+    characterShortcutsEnabled: false,
+    shortcutBindings: { tags: "Mod+t", "bad key": "ignored" },
+    quickTagSlots: { 1: "tag-id", 0: "ignored" },
   });
   assert.equal(preferences.fontSize, 32);
   assert.equal(preferences.lineHeight, 1.3);
   assert.equal(preferences.navWidth, 360);
   assert.equal(preferences.listWidth, 520);
+  assert.equal(preferences.remoteCleanupOnDelete, true);
+  assert.equal(preferences.characterShortcutsEnabled, false);
+  assert.deepEqual(preferences.shortcutBindings, { tags: "Mod+t" });
+  assert.deepEqual(preferences.quickTagSlots, { 1: "tag-id" });
   assert.equal(database.getReaderPreferences().listView, "table");
+  assert.equal(database.getReaderPreferences().listSort, "title");
+  assert.equal(database.getReaderPreferences().listSortDirection, "asc");
   const restored = openKnowledgeDatabase(
     path.join(directory, "restored.sqlite"),
     { startupBackup: false },

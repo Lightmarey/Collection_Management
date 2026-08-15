@@ -415,6 +415,8 @@ const DEFAULT_READER_PREFERENCES = Object.freeze({
   contentWidth: 760,
   pageMargin: 48,
   listView: "list",
+  listSort: "updated",
+  listSortDirection: "desc",
   sidebarCollapsed: false,
   tocHidden: false,
   infoHidden: false,
@@ -423,7 +425,23 @@ const DEFAULT_READER_PREFERENCES = Object.freeze({
   listWidth: 440,
   tocWidth: 250,
   infoWidth: 330,
+  remoteCleanupOnDelete: false,
+  characterShortcutsEnabled: true,
+  shortcutBindings: {},
+  quickTagSlots: {},
 });
+
+function stringRecord(value, keyPattern, valueLimit = 80) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key, item]) =>
+        keyPattern.test(key) &&
+        typeof item === "string" &&
+        item.length <= valueLimit,
+    ),
+  );
+}
 
 export class DatabaseError extends Error {
   constructor(message, code = "DATABASE_ERROR", options = {}) {
@@ -1696,6 +1714,7 @@ export class KnowledgeDatabase {
     sourceId = "",
     query = "",
     sort = "updated",
+    sortDirection,
     limit = 100,
     offset = 0,
   } = {}) {
@@ -1720,15 +1739,15 @@ export class KnowledgeDatabase {
       if (TIERS.has(filterValue)) {
         conditions.push("COALESCE(rs.tier, 'inbox') = ?");
         params.push(filterValue);
-      }
-    }
-    if (filterValue === "favorites")
-      conditions.push("COALESCE(rs.favorite, 0) = 1");
-    else if (filterValue.startsWith("tag:")) {
-      conditions.push(
-        "EXISTS (SELECT 1 FROM document_tags selected_dt WHERE selected_dt.document_id = d.id AND selected_dt.tag_id = ?)",
-      );
-      params.push(filterValue.slice(4));
+      } else if (filterValue === "favorites")
+        conditions.push("COALESCE(rs.favorite, 0) = 1");
+      else if (filterValue.startsWith("tag:")) {
+        conditions.push(
+          "EXISTS (SELECT 1 FROM document_tags selected_dt WHERE selected_dt.document_id = d.id AND selected_dt.tag_id = ?)",
+        );
+        params.push(filterValue.slice(4));
+      } else if (filterValue !== "all")
+        conditions.push("COALESCE(rs.tier, 'inbox') = 'inbox'");
     }
     for (const tagId of [...new Set(Array.isArray(tagIds) ? tagIds.map((id) => text(id).trim()).filter(Boolean) : [])]) {
       conditions.push(
@@ -1744,14 +1763,19 @@ export class KnowledgeDatabase {
       params.push(selectedSource);
     }
 
+    const direction = sortDirection === "asc"
+      ? "ASC"
+      : sortDirection === "desc"
+        ? "DESC"
+        : sort === "updated" ? "DESC" : "ASC";
     const orderBy =
       {
-        title: "d.title COLLATE NOCASE ASC, d.updated_at DESC",
-        duration: "length(COALESCE(v.body, '')) ASC, d.updated_at DESC",
+        title: `d.title COLLATE NOCASE ${direction}, d.updated_at DESC`,
+        duration: `length(COALESCE(v.body, '')) ${direction}, d.updated_at DESC`,
         status:
-          "CASE COALESCE(rs.tier, 'inbox') WHEN 'inbox' THEN 0 WHEN 'short' THEN 1 WHEN 'medium' THEN 2 WHEN 'long' THEN 3 ELSE 4 END, d.updated_at DESC",
-        updated: "d.updated_at DESC, d.id ASC",
-      }[sort] || "d.updated_at DESC, d.id ASC";
+          `CASE COALESCE(rs.tier, 'inbox') WHEN 'inbox' THEN 0 WHEN 'short' THEN 1 WHEN 'medium' THEN 2 WHEN 'long' THEN 3 ELSE 4 END ${direction}, d.updated_at DESC`,
+        updated: `d.updated_at ${direction}, d.id ASC`,
+      }[sort] || `d.updated_at ${direction}, d.id ASC`;
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     try {
       const rows = this.db
@@ -2154,6 +2178,12 @@ export class KnowledgeDatabase {
           : input.listView === "list"
             ? "list"
             : current.listView,
+      listSort: ["updated", "title", "duration", "status"].includes(input.listSort)
+        ? input.listSort
+        : current.listSort,
+      listSortDirection: ["asc", "desc"].includes(input.listSortDirection)
+        ? input.listSortDirection
+        : current.listSortDirection,
       customFontUrl:
         typeof input.customFontUrl === "string"
           ? input.customFontUrl
@@ -2196,6 +2226,22 @@ export class KnowledgeDatabase {
         300,
         Math.min(520, Number(input.infoWidth ?? current.infoWidth)),
       ),
+      remoteCleanupOnDelete:
+        typeof input.remoteCleanupOnDelete === "boolean"
+          ? input.remoteCleanupOnDelete
+          : current.remoteCleanupOnDelete,
+      characterShortcutsEnabled:
+        typeof input.characterShortcutsEnabled === "boolean"
+          ? input.characterShortcutsEnabled
+          : current.characterShortcutsEnabled,
+      shortcutBindings:
+        input.shortcutBindings == null
+          ? current.shortcutBindings
+          : stringRecord(input.shortcutBindings, /^[a-z0-9-]{1,64}$/),
+      quickTagSlots:
+        input.quickTagSlots == null
+          ? current.quickTagSlots
+          : stringRecord(input.quickTagSlots, /^[1-9]$/, 64),
     };
     const updatedAt = now();
     this.db
