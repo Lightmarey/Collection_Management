@@ -1627,6 +1627,24 @@ export class KnowledgeDatabase {
     }
   }
 
+  listSources() {
+    try {
+      return this.db
+        .prepare(
+          `SELECT c.id, c.name, COUNT(d.id) AS documentCount
+           FROM collections c JOIN collection_items ci ON ci.collection_id = c.id
+             JOIN documents d ON d.id = ci.document_id AND d.deleted_at IS NULL
+             LEFT JOIN reading_states rs ON rs.document_id = d.id
+           WHERE COALESCE(rs.tier, 'inbox') = 'inbox'
+           GROUP BY c.id HAVING COUNT(d.id) > 0
+           ORDER BY c.name COLLATE NOCASE ASC`,
+        )
+        .all();
+    } catch (error) {
+      throw dbError("读取来源", error);
+    }
+  }
+
   listAnnotations({ query = "", kind = "all" } = {}) {
     try {
       const value = text(query).trim();
@@ -1674,6 +1692,8 @@ export class KnowledgeDatabase {
 
   listDocuments({
     filter = "inbox",
+    tagIds = [],
+    sourceId = "",
     query = "",
     sort = "updated",
     limit = 100,
@@ -1709,6 +1729,19 @@ export class KnowledgeDatabase {
         "EXISTS (SELECT 1 FROM document_tags selected_dt WHERE selected_dt.document_id = d.id AND selected_dt.tag_id = ?)",
       );
       params.push(filterValue.slice(4));
+    }
+    for (const tagId of [...new Set(Array.isArray(tagIds) ? tagIds.map((id) => text(id).trim()).filter(Boolean) : [])]) {
+      conditions.push(
+        "EXISTS (SELECT 1 FROM document_tags selected_dt WHERE selected_dt.document_id = d.id AND selected_dt.tag_id = ?)",
+      );
+      params.push(tagId);
+    }
+    const selectedSource = text(sourceId).trim();
+    if (selectedSource) {
+      conditions.push(
+        "EXISTS (SELECT 1 FROM collection_items selected_ci WHERE selected_ci.document_id = d.id AND selected_ci.collection_id = ?)",
+      );
+      params.push(selectedSource);
     }
 
     const orderBy =

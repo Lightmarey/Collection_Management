@@ -28,6 +28,8 @@ export type DocumentWriteResult = {
 
 export type DocumentListOptions = {
   filter?: string;
+  tagIds?: string[];
+  sourceId?: string;
   query?: string;
   sort?: "updated" | "title" | "duration" | "status";
   limit?: number;
@@ -167,6 +169,7 @@ export class KnowledgeDatabase {
   removeTag(documentId: string, tagId: string): Record<string, unknown>;
   renameTag(tagId: string, name: string): Record<string, unknown>;
   listTags(): Array<Record<string, unknown>>;
+  listSources(): Array<Record<string, unknown>>;
   listAnnotations(options?: {
     query?: string;
     kind?: string;

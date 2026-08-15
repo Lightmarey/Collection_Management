@@ -2,6 +2,8 @@ export type SyncMode = "incremental" | "full";
 
 export type ReaderListOptions = {
   filter?: string;
+  tagIds?: string[];
+  sourceId?: string;
   query?: string;
   sort?: "updated" | "title" | "duration" | "status";
   limit?: number;
@@ -120,12 +122,14 @@ export type ReaderPreferences = {
 };
 
 export type ReaderTag = { id: string; name: string; documentCount: number };
+export type ReaderSource = { id: string; name: string; documentCount: number };
 
 export type ReaderBootstrapResult = {
   ok: boolean;
   error?: string;
   documents?: ReaderListItem[];
   tags?: ReaderTag[];
+  sources?: ReaderSource[];
   session?: { selectedDocumentId: string | null; updatedAt: string | null };
 };
 

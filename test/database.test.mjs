@@ -140,6 +140,34 @@ test("persists anchored annotations and remaps them across content versions", ()
   closeAndRemove(directory);
 });
 
+test("filters documents by the intersection of selected tags", () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), { startupBackup: false });
+  const both = database.upsertDocument({ source: "fixture", externalId: "both", title: "Both", body: "body" });
+  const onlyFirst = database.upsertDocument({ source: "fixture", externalId: "only-first", title: "Only first", body: "body" });
+  const first = database.addTag(both.documentId, "摄影");
+  const second = database.addTag(both.documentId, "算法");
+  database.addTag(onlyFirst.documentId, "摄影");
+
+  assert.deepEqual(database.listDocuments({ tagIds: [first.id] }).map((item) => item.title).sort(), ["Both", "Only first"]);
+  assert.deepEqual(database.listDocuments({ tagIds: [first.id, second.id] }).map((item) => item.title), ["Both"]);
+  closeAndRemove(directory, database);
+});
+
+test("filters inbox documents by their imported source", () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), { startupBackup: false });
+  const first = database.upsertDocument({ source: "zhihu", externalId: "first", title: "First", body: "body" });
+  const second = database.upsertDocument({ source: "zhihu", externalId: "second", title: "Second", body: "body" });
+  const source = database.upsertCollection({ source: "zhihu:column", externalId: "series", name: "计算摄影" });
+  database.linkCollectionDocument(source.collectionId, first.documentId);
+
+  assert.deepEqual(database.listSources(), [{ id: source.collectionId, name: "计算摄影", documentCount: 1 }]);
+  assert.deepEqual(database.listDocuments({ filter: "inbox", sourceId: source.collectionId }).map((item) => item.title), ["First"]);
+  assert.equal(database.listDocuments({ filter: "inbox" }).some((item) => item.id === second.documentId), true);
+  closeAndRemove(directory, database);
+});
+
 test("lists highlights and notes across active documents for the annotation workspace", () => {
   const directory = tempDirectory();
   const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), {
