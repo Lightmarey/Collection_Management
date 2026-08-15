@@ -17,6 +17,7 @@ export type ReaderStore = Pick<
   | "updateNote"
   | "deleteNote"
   | "addTag"
+  | "updateTagMemberships"
   | "removeTag"
   | "renameTag"
   | "saveReadingState"

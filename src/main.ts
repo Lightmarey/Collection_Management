@@ -299,17 +299,22 @@ function registerAppIpc() {
   });
   ipcMain.handle(
     "app:smoke-ready",
-    (event, input?: { readerLoaded?: unknown; hasDocuments?: unknown; windowControls?: unknown }) => {
+    (event, input?: { readerLoaded?: unknown; hasDocuments?: unknown; windowControls?: unknown; collapsedTags?: unknown }) => {
       assertTrusted(event.sender);
       if (!smokeMode) return false;
       if (input?.windowControls !== true) {
         log("smoke-failed", { check: "window-controls" });
         return false;
       }
+      if (input?.collapsedTags !== true) {
+        log("smoke-failed", { check: "collapsed-tags" });
+        return false;
+      }
       const checks = ["startup", "ipc-ping"];
       if (input?.hasDocuments === true && input.readerLoaded === true)
         checks.push("reader-sqlite");
       if (input?.windowControls === true) checks.push("window-controls");
+      if (input?.collapsedTags === true) checks.push("collapsed-tags");
       checks.push("close");
       log("smoke-passed", { checks });
       setTimeout(() => app.quit(), 25);
@@ -333,6 +338,7 @@ function registerUnavailableReaderIpc() {
     "annotation:update-note",
     "annotation:delete-note",
     "annotation:add-tag",
+    "annotation:update-tag-memberships",
     "annotation:remove-tag",
     "annotation:rename-tag",
     "reader:trash",

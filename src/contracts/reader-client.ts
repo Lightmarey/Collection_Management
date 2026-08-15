@@ -18,6 +18,7 @@ export type ReaderClient = {
   updateNote(id: string, body: string): Promise<{ ok: boolean; error?: string; note?: ReaderNote }>;
   deleteNote(id: string): Promise<{ ok: boolean; error?: string }>;
   addDocumentTag(documentId: string, name: string): Promise<{ ok: boolean; error?: string; tag?: ReaderTag }>;
+  updateDocumentTagMemberships(input: { documentIds: string[]; tagId?: string; name?: string; present: boolean }): Promise<{ ok: boolean; error?: string; tag?: ReaderTag; changedDocumentIds?: string[] }>;
   removeDocumentTag(documentId: string, tagId: string): Promise<{ ok: boolean; error?: string }>;
   renameDocumentTag(tagId: string, name: string): Promise<{ ok: boolean; error?: string; tag?: ReaderTag }>;
   trashDocument(documentId: string): Promise<{ ok: boolean; error?: string }>;

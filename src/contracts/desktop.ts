@@ -147,5 +147,6 @@ export type DesktopApi = ReaderClient & {
     readerLoaded?: boolean;
     hasDocuments?: boolean;
     windowControls?: boolean;
+    collapsedTags?: boolean;
   }): Promise<boolean>;
 };

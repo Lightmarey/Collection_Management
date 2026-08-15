@@ -167,6 +167,10 @@ export class KnowledgeDatabase {
   ): Record<string, unknown>;
   deleteNote(id: string): Record<string, unknown>;
   addTag(documentId: string, name: string): Record<string, unknown>;
+  updateTagMemberships(
+    documentIds: string[],
+    input: { tagId?: string; name?: string; present: boolean },
+  ): { tag: Record<string, unknown>; changedDocumentIds: string[] };
   removeTag(documentId: string, tagId: string): Record<string, unknown>;
   renameTag(tagId: string, name: string): Record<string, unknown>;
   listTags(): Array<Record<string, unknown>>;

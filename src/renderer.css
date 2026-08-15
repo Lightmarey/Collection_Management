@@ -275,6 +275,7 @@ button {
   gap: 6px;
   padding: 0 8px 8px;
 }
+.collapsed-tags-toggle { display: none !important; }
 .tags-nav .tag-pill {
   width: auto;
   height: 28px;
@@ -324,6 +325,28 @@ button {
 .nav-collapsed .nav-pane button {
   justify-content: center;
   padding: 0;
+}
+.nav-collapsed .tags-nav {
+  overflow: visible;
+}
+.nav-collapsed .tags-nav .tag-pills { display: none; }
+.nav-collapsed .collapsed-tags-toggle {
+  position: relative;
+  display: flex !important;
+}
+.nav-collapsed .collapsed-tags-toggle small {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  display: grid;
+  min-width: 15px;
+  height: 15px;
+  place-items: center;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 9px;
 }
 .list-pane {
   display: flex;

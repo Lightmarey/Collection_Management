@@ -154,6 +154,26 @@ test("filters documents by the intersection of selected tags", () => {
   closeAndRemove(directory, database);
 });
 
+test("updates tag memberships for many documents in one transaction", () => {
+  const directory = tempDirectory();
+  const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), { startupBackup: false });
+  const documents = ["one", "two", "three"].map((externalId) =>
+    database.upsertDocument({ source: "fixture", externalId, title: externalId, body: "body" }),
+  );
+  const documentIds = documents.map((document) => document.documentId);
+
+  const added = database.updateTagMemberships(documentIds, { name: "批量标签", present: true });
+  assert.deepEqual(new Set(added.changedDocumentIds), new Set(documentIds));
+  assert.equal(database.listTags()[0].documentCount, 3);
+  assert.equal(database.updateTagMemberships(documentIds, { name: "批量标签", present: true }).changedDocumentIds.length, 0);
+
+  database.updateTagMemberships(documentIds.slice(0, 2), { tagId: added.tag.id, present: false });
+  assert.equal(database.listTags()[0].documentCount, 1);
+  database.updateTagMemberships(documentIds.slice(2), { tagId: added.tag.id, present: false });
+  assert.equal(database.listTags().length, 0);
+  closeAndRemove(directory, database);
+});
+
 test("filters inbox documents by their imported source", () => {
   const directory = tempDirectory();
   const database = openKnowledgeDatabase(path.join(directory, "knowledge.sqlite"), { startupBackup: false });

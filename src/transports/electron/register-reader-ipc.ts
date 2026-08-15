@@ -119,6 +119,23 @@ export function registerReaderIpc(options: {
       typeof name === "string" ? name : "",
     ),
   }));
+  handle(
+    "annotation:update-tag-memberships",
+    "tag-memberships-update-failed",
+    (input) => {
+      const value = objectInput(input);
+      return reader.updateTagMemberships({
+        documentIds: Array.isArray(value.documentIds)
+          ? value.documentIds.filter(
+              (id): id is string => typeof id === "string" && Boolean(id),
+            )
+          : [],
+        tagId: typeof value.tagId === "string" ? value.tagId : undefined,
+        name: typeof value.name === "string" ? value.name : undefined,
+        present: value.present !== false,
+      });
+    },
+  );
   handle("annotation:remove-tag", "tag-delete-failed", (documentId, tagId) =>
     reader.removeTag(
       typeof documentId === "string" ? documentId : "",

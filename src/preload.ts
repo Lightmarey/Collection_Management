@@ -71,6 +71,8 @@ const desktop: DesktopApi = {
   deleteNote: (id) => ipcRenderer.invoke("annotation:delete-note", id),
   addDocumentTag: (documentId, name) =>
     ipcRenderer.invoke("annotation:add-tag", documentId, name),
+  updateDocumentTagMemberships: (input) =>
+    ipcRenderer.invoke("annotation:update-tag-memberships", input),
   removeDocumentTag: (documentId, tagId) =>
     ipcRenderer.invoke("annotation:remove-tag", documentId, tagId),
   renameDocumentTag: (tagId, name) =>

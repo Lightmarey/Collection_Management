@@ -253,7 +253,6 @@ function App() {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [noteBody, setNoteBody] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
-  const [tagDraft, setTagDraft] = useState("");
   const [remoteRemovalState, setRemoteRemovalState] =
     useState<RemoteRemovalState>("idle");
   const [documentMenu, setDocumentMenu] = useState<DocumentMenuState | null>(null);
@@ -337,6 +336,20 @@ function App() {
         return Boolean(closeButton && hit && closeButton.contains(hit));
       };
       const libraryControls = controlsAreClickable();
+      const appElement = document.querySelector<HTMLElement>(".app");
+      const wasCollapsed = appElement?.classList.contains("nav-collapsed") === true;
+      appElement?.classList.add("nav-collapsed");
+      const collapsedTagButton = document.querySelector<HTMLElement>(
+        ".collapsed-tags-toggle",
+      );
+      const tagPills = document.querySelector<HTMLElement>(".tag-pills");
+      const collapsedTags = Boolean(
+        collapsedTagButton &&
+        tagPills &&
+        getComputedStyle(collapsedTagButton).display !== "none" &&
+        getComputedStyle(tagPills).display === "none",
+      );
+      appElement?.classList.toggle("nav-collapsed", wasCollapsed);
       setExpanded(true);
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -354,6 +367,7 @@ function App() {
         hasDocuments: Boolean(first),
         readerLoaded: loaded,
         windowControls,
+        collapsedTags,
       });
     })();
   }, []);
@@ -707,9 +721,6 @@ function App() {
     void loadList(reader.id, true);
     return true;
   }
-  function addTag() {
-    void addReaderTag(tagDraft).then((ok) => ok && setTagDraft(""));
-  }
   async function removeReaderTag(tagId: string) {
     if (!reader) return;
     const removed = reader.tags.find((tag) => tag.id === tagId);
@@ -921,23 +932,26 @@ function App() {
 
   async function addTagToDocuments(ids: string[], name: string) {
     const tagName = name.trim();
-    if (!tagName) return false;
-    const results = await Promise.all(
-      ids.map((id) => readerClient.addDocumentTag(id, tagName)),
-    );
+    if (!tagName || !ids.length) return false;
+    const result = await readerClient.updateDocumentTagMemberships({
+      documentIds: ids,
+      name: tagName,
+      present: true,
+    });
+    if (!result.ok) {
+      setStatus(`添加标签失败：${result.error ?? "unknown"}`);
+      return false;
+    }
+    const targetIds = new Set(ids);
     setDocuments((current) =>
       current.map((item) =>
-        ids.includes(item.id) && !item.tagNames.includes(tagName)
+        targetIds.has(item.id) && !item.tagNames.includes(tagName)
           ? { ...item, tagNames: [...item.tagNames, tagName] }
           : item,
       ),
     );
-    if (reader && ids.includes(reader.id)) refreshReader();
+    if (reader && targetIds.has(reader.id)) refreshReader();
     void loadList(reader?.id, true);
-    if (results.some((result) => !result.ok)) {
-      setStatus("部分文档添加标签失败");
-      return false;
-    }
     return true;
   }
 
@@ -948,17 +962,21 @@ function App() {
         (reader?.id === id && reader.tags.some((current) => current.id === tag.id));
     };
     const { remove, targets } = tagTogglePlan(ids, ids.filter(hasTag));
-    const results = await Promise.all(
-      targets.map((id) =>
-        remove
-          ? readerClient.removeDocumentTag(id, tag.id)
-          : readerClient.addDocumentTag(id, tag.name),
-      ),
-    );
-    const changed = targets.filter((_, index) => results[index].ok);
+    if (!targets.length) return;
+    const result = await readerClient.updateDocumentTagMemberships({
+      documentIds: targets,
+      tagId: tag.id,
+      name: tag.name,
+      present: !remove,
+    });
+    if (!result.ok) {
+      setStatus(`${remove ? "移除" : "添加"}标签失败：${result.error ?? "unknown"}`);
+      return;
+    }
+    const targetIds = new Set(targets);
     setDocuments((current) =>
       current.map((item) =>
-        changed.includes(item.id)
+        targetIds.has(item.id)
           ? {
               ...item,
               tagNames: remove
@@ -968,7 +986,7 @@ function App() {
           : item,
       ),
     );
-    if (reader && changed.includes(reader.id))
+    if (reader && targetIds.has(reader.id))
       setReader({
         ...reader,
         tags: remove
@@ -976,8 +994,6 @@ function App() {
           : [...reader.tags, tag],
       });
     void loadList(reader?.id, true);
-    if (changed.length !== targets.length)
-      setStatus(`部分文档${remove ? "移除" : "添加"}标签失败`);
   }
 
   async function batchAddTag() {
@@ -1932,9 +1948,7 @@ function App() {
                 {detailTab === "info" ? (
                   <Properties
                     reader={reader}
-                    tagDraft={tagDraft}
-                    setTagDraft={setTagDraft}
-                    addTag={addTag}
+                    addTag={addReaderTag}
                     removeTag={removeReaderTag}
                     saveState={saveState}
                     sync={() =>
@@ -1995,6 +2009,26 @@ function App() {
               </div>
               <div className="nav-section tags-nav">
                 <span>{english ? "TAGS" : "标签"}</span>
+                <button
+                  className={`collapsed-tags-toggle${selectedTagIds.size ? " active" : ""}`}
+                  aria-label={
+                    selectedTagIds.size
+                      ? `展开标签，已选择 ${selectedTagIds.size} 个`
+                      : "展开标签"
+                  }
+                  title={
+                    selectedTagIds.size
+                      ? `已选择 ${selectedTagIds.size} 个标签`
+                      : english ? "Tags" : "标签"
+                  }
+                  onClick={() => {
+                    setSidebarCollapsed(false);
+                    void savePreferences({ sidebarCollapsed: false });
+                  }}
+                >
+                  <Tags size={17} />
+                  {selectedTagIds.size > 0 && <small>{selectedTagIds.size}</small>}
+                </button>
                 <div className="tag-pills">
                   {allTags.map((tag) => {
                     const active = selectedTagIds.has(tag.id);
@@ -2366,9 +2400,7 @@ function App() {
               ) : (
                 <Properties
                   reader={reader}
-                  tagDraft={tagDraft}
-                  setTagDraft={setTagDraft}
-                  addTag={addTag}
+                  addTag={addReaderTag}
                   removeTag={removeReaderTag}
                   saveState={saveState}
                   sync={() =>
@@ -3972,8 +4004,6 @@ function ReaderToolbar({
 
 function Properties({
   reader,
-  tagDraft,
-  setTagDraft,
   addTag,
   removeTag,
   saveState,
@@ -3985,9 +4015,7 @@ function Properties({
   tagInputRef,
 }: {
   reader: ReaderDocument | null;
-  tagDraft: string;
-  setTagDraft(value: string): void;
-  addTag(): void;
+  addTag(name: string): Promise<boolean>;
   removeTag(tagId: string): void;
   saveState(input: { tier?: string; favorite?: boolean }): void;
   sync(): void;
@@ -3997,6 +4025,23 @@ function Properties({
   remoteRemovalState: RemoteRemovalState;
   tagInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
+  const [tagDraft, setTagDraft] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
+
+  useEffect(() => {
+    setTagDraft("");
+    setTagSaving(false);
+  }, [reader?.id]);
+
+  async function submitTag() {
+    const name = tagDraft.trim();
+    if (!name || tagSaving) return;
+    setTagSaving(true);
+    const added = await addTag(name);
+    if (added) setTagDraft("");
+    setTagSaving(false);
+  }
+
   if (!reader) return <Empty text="选择文档后查看属性" />;
   return (
     <div className="properties">
@@ -4025,7 +4070,17 @@ function Properties({
             ref={tagInputRef}
             value={tagDraft}
             onChange={(event) => setTagDraft(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && addTag()}
+            onKeyDown={(event) => {
+              if (
+                event.key !== "Enter" ||
+                event.nativeEvent.isComposing ||
+                tagSaving
+              )
+                return;
+              event.preventDefault();
+              void submitTag();
+            }}
+            disabled={tagSaving}
             placeholder="添加标签"
           />
         </div>

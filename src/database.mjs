@@ -1403,32 +1403,67 @@ export class KnowledgeDatabase {
   }
 
   addTag(documentId, name) {
+    return this.updateTagMemberships([documentId], { name, present: true }).tag;
+  }
+
+  updateTagMemberships(
+    documentIds,
+    { tagId = "", name = "", present = true } = {},
+  ) {
     try {
       return this.db.transaction(() => {
         const timestamp = now();
-        const tagName = text(name).trim();
-        if (!tagName)
-          throw new DatabaseError("标签不能为空", "VALIDATION_ERROR");
-        let tag = this.db
-          .prepare("SELECT * FROM tags WHERE name = ?")
-          .get(tagName);
-        if (!tag) {
-          const id = randomUUID();
-          this.db
-            .prepare("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)")
-            .run(id, tagName, timestamp);
-          tag = { id, name: tagName, created_at: timestamp };
+        const ids = [
+          ...new Set(
+            (Array.isArray(documentIds) ? documentIds : [])
+              .map((id) => text(id).trim())
+              .filter(Boolean),
+          ),
+        ];
+        if (!ids.length)
+          throw new DatabaseError("至少选择一篇文档", "VALIDATION_ERROR");
+        let tag;
+        if (present) {
+          const tagName = text(name).trim();
+          if (!tagName)
+            throw new DatabaseError("标签不能为空", "VALIDATION_ERROR");
+          tag = this.db
+            .prepare("SELECT * FROM tags WHERE name = ?")
+            .get(tagName);
+          if (!tag) {
+            const id = randomUUID();
+            this.db
+              .prepare("INSERT INTO tags (id, name, created_at) VALUES (?, ?, ?)")
+              .run(id, tagName, timestamp);
+            tag = { id, name: tagName, created_at: timestamp };
+          }
+        } else {
+          const selectedTagId = text(tagId).trim();
+          if (!selectedTagId)
+            throw new DatabaseError("标签不存在", "VALIDATION_ERROR");
+          tag = this.db
+            .prepare("SELECT * FROM tags WHERE id = ?")
+            .get(selectedTagId) ?? { id: selectedTagId };
         }
-        this.db
-          .prepare(
-            "INSERT OR IGNORE INTO document_tags (document_id, tag_id, created_at) VALUES (?, ?, ?)",
-          )
-          .run(documentId, tag.id, timestamp);
-        this._refreshSearchIndex(documentId);
-        return tag;
+        const statement = this.db.prepare(
+          present
+            ? "INSERT OR IGNORE INTO document_tags (document_id, tag_id, created_at) VALUES (?, ?, ?)"
+            : "DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?",
+        );
+        const changedDocumentIds = [];
+        for (const documentId of ids) {
+          const result = present
+            ? statement.run(documentId, tag.id, timestamp)
+            : statement.run(documentId, tag.id);
+          if (result.changes) changedDocumentIds.push(documentId);
+        }
+        if (!present) this._pruneUnusedTags();
+        for (const documentId of changedDocumentIds)
+          this._refreshSearchIndex(documentId);
+        return { tag, changedDocumentIds };
       })();
     } catch (error) {
-      throw dbError("写入标签", error);
+      throw dbError(present ? "写入标签" : "删除标签", error);
     }
   }
 
@@ -1584,24 +1619,12 @@ export class KnowledgeDatabase {
   }
 
   removeTag(documentId, tagId) {
-    try {
-      return this.db.transaction(() => {
-        this.db
-          .prepare(
-            "DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?",
-          )
-          .run(text(documentId), text(tagId));
-        this._pruneUnusedTags();
-        this._refreshSearchIndex(text(documentId));
-        return {
-          documentId: text(documentId),
-          tagId: text(tagId),
-          deleted: true,
-        };
-      })();
-    } catch (error) {
-      throw dbError("删除标签", error);
-    }
+    this.updateTagMemberships([documentId], { tagId, present: false });
+    return {
+      documentId: text(documentId),
+      tagId: text(tagId),
+      deleted: true,
+    };
   }
 
   renameTag(tagId, name) {

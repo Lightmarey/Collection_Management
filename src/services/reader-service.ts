@@ -55,6 +55,14 @@ export class ReaderService {
   addTag(documentId: string, name: string) {
     return this.database.addTag(documentId, name);
   }
+  updateTagMemberships(input: {
+    documentIds: string[];
+    tagId?: string;
+    name?: string;
+    present: boolean;
+  }) {
+    return this.database.updateTagMemberships(input.documentIds, input);
+  }
   removeTag(documentId: string, tagId: string) {
     return this.database.removeTag(documentId, tagId);
   }
