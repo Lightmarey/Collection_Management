@@ -75,9 +75,13 @@ export function shortcutConflict(commands, overrides, commandId, binding) {
   if (!binding) return null;
   const target = commands.find((command) => command.id === commandId);
   if (!target) return null;
-  return commands.find((command) => command.id !== commandId &&
-    commandBinding(command, overrides) === binding &&
-    (command.contexts.includes("global") || target.contexts.includes("global") ||
-      command.contexts.some((context) => target.contexts.includes(context)))) ?? null;
+  return commands.find((command) => {
+    if (command.id === commandId) return false;
+    const other = commandBinding(command, overrides);
+    const overlaps = command.contexts.includes("global") ||
+      target.contexts.includes("global") ||
+      command.contexts.some((context) => target.contexts.includes(context));
+    return overlaps && Boolean(other) &&
+      (other === binding || other.startsWith(`${binding} `) || binding.startsWith(`${other} `));
+  }) ?? null;
 }
-

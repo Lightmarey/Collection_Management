@@ -10,6 +10,7 @@ import {
 const commands = [
   { id: "palette", title: "Palette", defaultBinding: "Mod+k", contexts: ["global"] },
   { id: "short", title: "Short", defaultBinding: "c 1", contexts: ["library", "reader"] },
+  { id: "archive", title: "Archive", defaultBinding: "c 2", contexts: ["library", "reader"] },
   { id: "list-next", title: "Next", defaultBinding: "Down", contexts: ["library"] },
   { id: "scroll", title: "Scroll", defaultBinding: "Down", contexts: ["reader"] },
 ];
@@ -32,5 +33,5 @@ test("can disable character-only shortcuts and detects overlapping conflicts", (
   assert.equal(resolveShortcut({ commands, context: "reader", stroke: "c", characterShortcuts: false }).pending, "");
   assert.equal(shortcutConflict(commands, {}, "list-next", "Down"), null);
   assert.equal(shortcutConflict(commands, {}, "short", "Mod+k")?.id, "palette");
+  assert.equal(shortcutConflict(commands, {}, "short", "c")?.id, "archive");
 });
-

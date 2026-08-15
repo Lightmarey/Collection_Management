@@ -20,6 +20,7 @@ import {
   Highlighter,
   Inbox,
   Info,
+  Keyboard,
   List,
   Menu,
   Minus,
@@ -70,6 +71,7 @@ import {
   commandBinding,
   formatShortcut,
   resolveShortcut,
+  shortcutConflict,
   shortcutStroke,
 } from "./renderer/keyboard-shortcuts.mjs";
 import "lxgw-wenkai-webfont/style.css";
@@ -147,6 +149,13 @@ type TocItem = {
 };
 
 type RemoteRemovalState = "idle" | "loading" | "success" | "partial" | "error";
+type DocumentMenuState = {
+  ids: string[];
+  x: number;
+  y: number;
+  mode: "main" | "tier" | "tags";
+};
+type SettingsSection = "general" | "shortcuts" | "data" | "about";
 
 function buildToc(items: Array<Omit<TocItem, "children">>) {
   const roots: TocItem[] = [];
@@ -227,6 +236,7 @@ function App() {
   const [tagDraft, setTagDraft] = useState("");
   const [remoteRemovalState, setRemoteRemovalState] =
     useState<RemoteRemovalState>("idle");
+  const [documentMenu, setDocumentMenu] = useState<DocumentMenuState | null>(null);
   const [annotations, setAnnotations] = useState<ReaderAnnotationListItem[]>([]);
   const [annotationQuery, setAnnotationQuery] = useState("");
   const [annotationKind, setAnnotationKind] = useState<
@@ -236,7 +246,7 @@ function App() {
     null,
   );
   const [settingsSection, setSettingsSection] = useState<
-    "general" | "data" | "about"
+    SettingsSection
   >("general");
   const [appInfo, setAppInfo] = useState<{
     version: string;
@@ -689,33 +699,81 @@ function App() {
       );
     void loadList(reader.id, true);
   }
+  async function trashDocuments(ids: string[]) {
+    const results = await Promise.all(ids.map((id) => readerClient.trashDocument(id)));
+    const removed = ids.filter((_, index) => results[index].ok);
+    removeVisibleDocuments(removed);
+    if (removed.length !== ids.length)
+      setStatus(`${ids.length - removed.length} 篇移入废纸篓失败`);
+  }
   async function trash(id: string) {
-    const result = await readerClient.trashDocument(id);
-    if (result.ok) removeVisibleDocuments([id]);
-    else setStatus(`删除失败：${result.error}`);
+    await trashDocuments([id]);
+  }
+  async function restoreDocuments(ids: string[]) {
+    const results = await Promise.all(ids.map((id) => readerClient.restoreDocument(id)));
+    removeVisibleDocuments(ids.filter((_, index) => results[index].ok));
   }
   async function restore(id: string) {
-    const result = await readerClient.restoreDocument(id);
-    if (result.ok) removeVisibleDocuments([id]);
+    await restoreDocuments([id]);
   }
-  async function permanentDelete(id: string) {
-    if (
-      window.confirm("永久删除正文、标注、批注和未共享媒体？此操作不可恢复。")
-    ) {
-      await readerClient.deleteDocumentPermanently(id);
-      removeVisibleDocuments([id]);
+  async function deleteDocumentsPermanently(
+    ids: string[],
+    options: { forceLocal?: boolean; confirmed?: boolean } = {},
+  ) {
+    const cleanup = preferences.remoteCleanupOnDelete === true && !options.forceLocal;
+    const loaded = cleanup
+      ? await Promise.all(ids.map((id) => readerClient.getReaderDocument(id)))
+      : [];
+    const membershipCount = loaded.reduce(
+      (count, result) => count + (result.document?.sourceMemberships?.length ?? 0),
+      0,
+    );
+    if (!options.confirmed && !window.confirm(
+      cleanup
+        ? `永久删除 ${ids.length} 篇本地内容，并先取消 ${membershipCount} 个远程收藏关系？\n\n远程取消失败的内容会继续保留在废纸篓。`
+        : `永久删除 ${ids.length} 篇正文、标注、批注和未共享媒体？此操作不可恢复。`,
+    )) return { deleted: 0, failed: 0 };
+
+    const deleted: string[] = [];
+    let failed = 0;
+    for (const [index, id] of ids.entries()) {
+      if (cleanup && (!loaded[index]?.ok || !loaded[index]?.document)) {
+        failed += 1;
+        continue;
+      }
+      const memberships = loaded[index]?.document?.sourceMemberships ?? [];
+      if (cleanup && memberships.length) {
+        const remote = await removeRemoteMemberships([id], false);
+        if (remote.failed) {
+          failed += 1;
+          continue;
+        }
+      }
+      const result = await readerClient.deleteDocumentPermanently(id);
+      if (result.ok) deleted.push(id);
+      else failed += 1;
     }
+    removeVisibleDocuments(deleted);
+    setStatus(failed
+      ? `已永久删除 ${deleted.length} 篇，${failed} 篇因远程或本地操作失败而保留`
+      : `已永久删除 ${deleted.length} 篇内容`);
+    return { deleted: deleted.length, failed };
+  }
+  async function permanentDelete(id: string, forceLocal = false) {
+    await deleteDocumentsPermanently([id], { forceLocal });
   }
 
   async function emptyTrash() {
     if (!documents.length) return;
-    if (!window.confirm(`永久删除废纸篓中的 ${documents.length} 篇内容？此操作不可恢复。`))
+    if (preferences.remoteCleanupOnDelete) {
+      await deleteDocumentsPermanently(documents.map((item) => item.id));
       return;
+    }
+    if (!window.confirm(`永久删除废纸篓中的 ${documents.length} 篇内容？此操作不可恢复。`)) return;
     const result = await readerClient.emptyTrash();
-    if (result.ok) {
-      removeVisibleDocuments(documents.map((item) => item.id));
-      setStatus(`已清空废纸篓，共删除 ${result.deleted ?? documents.length} 篇`);
-    } else setStatus(`清空废纸篓失败：${result.error}`);
+    if (!result.ok) return setStatus(`清空废纸篓失败：${result.error}`);
+    removeVisibleDocuments(documents.map((item) => item.id));
+    setStatus(`已清空废纸篓，共删除 ${result.deleted ?? documents.length} 篇`);
   }
 
   function removeVisibleDocuments(ids: string[]) {
@@ -756,8 +814,48 @@ function App() {
     setSelectedId(item.id);
   }
 
-  async function batchState(patch: { tier?: string; favorite?: boolean }) {
-    const ids = [...selectedIds];
+  function openDocumentMenu(
+    item: ReaderListItem,
+    event: React.MouseEvent | React.KeyboardEvent,
+    mode: DocumentMenuState["mode"] = "main",
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const inSelection = selectedIds.has(item.id) && selectedIds.size > 0;
+    const ids = inSelection ? [...selectedIds] : [item.id];
+    if (!inSelection) {
+      setSelectedIds(new Set());
+      setSelectedId(item.id);
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDocumentMenu({
+      ids,
+      mode,
+      x: event.type === "contextmenu" && "clientX" in event ? event.clientX : rect.right,
+      y: event.type === "contextmenu" && "clientY" in event ? event.clientY : rect.bottom + 4,
+    });
+  }
+
+  function openReaderDocumentMenu(
+    event: React.MouseEvent,
+    mode: DocumentMenuState["mode"] = "main",
+  ) {
+    if (!reader) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setDocumentMenu({
+      ids: [reader.id],
+      mode,
+      x: event.type === "contextmenu" ? event.clientX : rect.right,
+      y: event.type === "contextmenu" ? event.clientY : rect.bottom + 4,
+    });
+  }
+
+  async function setDocumentsState(
+    ids: string[],
+    patch: { tier?: string; favorite?: boolean },
+  ) {
     await Promise.all(
       ids.map((documentId) =>
         readerClient.saveReadingState({ documentId, ...patch }),
@@ -765,7 +863,7 @@ function App() {
     );
     setDocuments((current) =>
       current.map((item) =>
-        selectedIds.has(item.id)
+        ids.includes(item.id)
           ? {
               ...item,
               ...patch,
@@ -774,7 +872,7 @@ function App() {
           : item,
       ),
     );
-    if (reader && selectedIds.has(reader.id))
+    if (reader && ids.includes(reader.id))
       setReader({
         ...reader,
         ...patch,
@@ -782,22 +880,37 @@ function App() {
       });
   }
 
+  async function batchState(patch: { tier?: string; favorite?: boolean }) {
+    await setDocumentsState([...selectedIds], patch);
+  }
+
+  async function addTagToDocuments(ids: string[], name: string) {
+    const tagName = name.trim();
+    if (!tagName) return false;
+    const results = await Promise.all(
+      ids.map((id) => readerClient.addDocumentTag(id, tagName)),
+    );
+    setDocuments((current) =>
+      current.map((item) =>
+        ids.includes(item.id) && !item.tagNames.includes(tagName)
+          ? { ...item, tagNames: [...item.tagNames, tagName] }
+          : item,
+      ),
+    );
+    if (reader && ids.includes(reader.id)) refreshReader();
+    void loadList(reader?.id, true);
+    if (results.some((result) => !result.ok)) {
+      setStatus("部分文档添加标签失败");
+      return false;
+    }
+    return true;
+  }
+
   async function batchAddTag() {
     const name = window.prompt("为选中文档添加标签")?.trim();
     if (!name) return;
     const ids = [...selectedIds];
-    const results = await Promise.all(
-      ids.map((id) => readerClient.addDocumentTag(id, name)),
-    );
-    setDocuments((current) =>
-      current.map((item) =>
-        selectedIds.has(item.id) && !item.tagNames.includes(name)
-          ? { ...item, tagNames: [...item.tagNames, name] }
-          : item,
-      ),
-    );
-    if (results.some((result) => !result.ok)) setStatus("部分文档添加标签失败");
-    if (reader && selectedIds.has(reader.id)) refreshReader();
+    await addTagToDocuments(ids, name);
   }
 
   async function editDocumentTags(item: ReaderListItem, tags: string[]) {
@@ -821,22 +934,9 @@ function App() {
 
   async function batchRemove(action: "trash" | "restore" | "delete") {
     const ids = [...selectedIds];
-    if (
-      action === "delete" &&
-      !window.confirm(`永久删除选中的 ${ids.length} 篇内容？此操作不可恢复。`)
-    )
-      return;
-    const call =
-      action === "trash"
-        ? readerClient.trashDocument
-        : action === "restore"
-          ? readerClient.restoreDocument
-          : readerClient.deleteDocumentPermanently;
-    const results = await Promise.all(ids.map((id) => call(id)));
-    const removed = ids.filter((_, index) => results[index].ok);
-    removeVisibleDocuments(removed);
-    if (removed.length !== ids.length)
-      setStatus(`${ids.length - removed.length} 篇操作失败`);
+    if (action === "trash") await trashDocuments(ids);
+    else if (action === "restore") await restoreDocuments(ids);
+    else await deleteDocumentsPermanently(ids);
   }
 
   function savePreferences(patch: Partial<ReaderPreferences>) {
@@ -908,50 +1008,41 @@ function App() {
       setStatus("同步已转入后台");
     } else setStatus(`同步未开始：${result.error}`);
   }
-  async function removeRemoteMembership() {
-    if (
-      !reader ||
-      !(
-        reader.source.split(":", 1)[0] === "zhihu" ||
-        reader.sourceMemberships?.some(
-          (membership) => membership.source.split(":", 1)[0] === "zhihu",
-        ) ||
-        /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(reader.url ?? "")
-      )
-    )
-      return;
-    if (
-      !window.confirm(
-        "从这篇内容所属的全部自有知乎收藏夹中取消收藏？本地正文会保留。",
-      )
-    )
-      return;
+  async function removeRemoteMemberships(ids: string[], confirm = true) {
+    if (!ids.length) return { completed: 0, failed: 0 };
+    if (confirm && !window.confirm(
+      `从选中内容所属的全部自有知乎收藏夹中取消收藏？本地正文会保留。\n\n共 ${ids.length} 篇内容。`,
+    )) return { completed: 0, failed: 0 };
     setRemoteRemovalState("loading");
     setStatus("正在取消知乎收藏…");
-    const result = await window.desktop.removeDocumentSourceMemberships(
-      reader.id,
-    );
-    const completed = result.completed ?? 0;
-    if (completed) {
-      const removed = new Set(result.removedSourceIds ?? []);
-      setReader((current) =>
-        current?.id === reader.id
-          ? {
-              ...current,
-              sourceMemberships: (current.sourceMemberships ?? []).filter(
-                (item) => !removed.has(item.sourceId),
-              ),
-            }
-          : current,
-      );
+    let completed = 0;
+    let failed = 0;
+    let firstError = "";
+    for (const [index, id] of ids.entries()) {
+      if (index) await new Promise((resolve) => setTimeout(resolve, 1200));
+      const result = await window.desktop.removeDocumentSourceMemberships(id);
+      completed += result.completed ?? 0;
+      if (!result.ok) {
+        failed += 1;
+        firstError ||= result.error ?? result.errors?.[0]?.error ?? "unknown";
+      }
+      if (reader?.id === id && (result.completed ?? 0) > 0) {
+        const removed = new Set(result.removedSourceIds ?? []);
+        setReader((current) => current?.id === id ? {
+          ...current,
+          sourceMemberships: (current.sourceMemberships ?? []).filter(
+            (item) => !removed.has(item.sourceId),
+          ),
+        } : current);
+      }
     }
-    if (result.ok) {
+    if (!failed) {
       setRemoteRemovalState("success");
       setStatus(`已从 ${completed} 个知乎收藏夹取消收藏`);
-      return;
+      return { completed, failed: 0 };
     }
     setRemoteRemovalState(completed ? "partial" : "error");
-    const code = result.error ?? result.errors?.[0]?.error ?? "unknown";
+    const code = firstError;
     const message =
       (
         {
@@ -965,9 +1056,15 @@ function App() {
       )[code] ?? code;
     setStatus(
       completed
-        ? `已取消 ${completed} 个，另有 ${result.failed ?? 0} 个失败：${message}`
+        ? `已取消 ${completed} 个，另有 ${failed} 篇失败：${message}`
         : `取消收藏失败：${message}`,
     );
+    return { completed, failed };
+  }
+
+  async function removeRemoteMembership() {
+    if (!reader) return;
+    await removeRemoteMemberships([reader.id]);
   }
   async function importFiles(files: FileList | File[]) {
     for (const file of Array.from(files)) {
@@ -1186,6 +1283,14 @@ function App() {
     });
   }
 
+  function activeDocumentIds() {
+    return selectedIds.size
+      ? [...selectedIds]
+      : reader
+        ? [reader.id]
+        : [];
+  }
+
   const commandDefinitions: AppCommand[] = [
     {
       id: "command-palette",
@@ -1351,9 +1456,31 @@ function App() {
       defaultBinding: `c ${index === 0 ? 0 : index}`,
       contexts: ["library", "reader"] as Array<"library" | "reader">,
       keywords: ["层级", "分类"],
-      disabledReason: reader ? undefined : "请先选择文档",
-      run: () => reader && saveState({ tier: key }),
+      disabledReason: reader || selectedIds.size ? undefined : "请先选择文档",
+      run: () => void setDocumentsState(activeDocumentIds(), { tier: key }),
     })),
+    ...Array.from({ length: 9 }, (_, index) => {
+      const slot = String(index + 1);
+      const tagId = preferences.quickTagSlots?.[slot];
+      const tag = allTags.find((candidate) => candidate.id === tagId);
+      return {
+        id: `quick-tag-${slot}`,
+        title: tag ? `添加标签 #${tag.name}` : `设置快捷标签 ${slot}`,
+        category: "文档",
+        defaultBinding: `x ${slot}`,
+        contexts: ["library", "reader"] as Array<"library" | "reader">,
+        keywords: ["标签", "快捷标签"],
+        disabledReason: reader || selectedIds.size ? undefined : "请先选择文档",
+        run: () => {
+          if (tag) void addTagToDocuments(activeDocumentIds(), tag.name);
+          else {
+            setWorkspace("settings");
+            setSettingsSection("shortcuts");
+            setStatus(`请先为 X ${slot} 选择一个标签`);
+          }
+        },
+      };
+    }),
     {
       id: "open-original",
       title: "打开原文",
@@ -1647,6 +1774,7 @@ function App() {
               removeTag={removeReaderTag}
               toolbarOpen={readerToolbarOpen}
               setToolbarOpen={setReaderToolbarOpen}
+              openActions={openReaderDocumentMenu}
             />
             {!infoHidden && (
               <ResizeHandle
@@ -1934,6 +2062,7 @@ function App() {
                       selectedId={selectedId}
                       selectedIds={selectedIds}
                       select={selectDocument}
+                      openMenu={openDocumentMenu}
                       editTags={editDocumentTags}
                       save={(item, patch) => {
                         setReader(
@@ -1959,6 +2088,9 @@ function App() {
                         selected={item.id === selectedId}
                         multiSelected={selectedIds.has(item.id)}
                         onClick={(event) => selectDocument(item, event)}
+                        openMenu={(event, mode) =>
+                          openDocumentMenu(item, event, mode)
+                        }
                         trash={filter === "trash"}
                         restore={() => void restore(item.id)}
                         remove={() => void permanentDelete(item.id)}
@@ -2059,6 +2191,7 @@ function App() {
                   removeTag={removeReaderTag}
                   toolbarOpen={readerToolbarOpen}
                   setToolbarOpen={setReaderToolbarOpen}
+                  openActions={openReaderDocumentMenu}
                 />
               ) : (
                 <Properties
@@ -2102,6 +2235,8 @@ function App() {
                   section={settingsSection}
                   preferences={preferences}
                   savePreferences={savePreferences}
+                  commands={commands}
+                  tags={allTags}
                   appInfo={appInfo}
                   updateStatus={updateStatus}
                   backupStatus={backupStatus}
@@ -2135,6 +2270,39 @@ function App() {
           mode={commandOverlay}
           commands={commands}
           close={() => setCommandOverlay(null)}
+        />
+      )}
+      {documentMenu && (
+        <DocumentActionsMenu
+          menu={documentMenu}
+          items={documents.filter((item) => documentMenu.ids.includes(item.id))}
+          reader={reader && documentMenu.ids.includes(reader.id) ? reader : null}
+          tags={allTags}
+          trash={filter === "trash"}
+          remoteCleanupOnDelete={preferences.remoteCleanupOnDelete === true}
+          close={() => setDocumentMenu(null)}
+          setMode={(mode) =>
+            setDocumentMenu((current) => current && { ...current, mode })
+          }
+          setTier={(tier) => void setDocumentsState(documentMenu.ids, { tier })}
+          addTag={(name) => void addTagToDocuments(documentMenu.ids, name)}
+          removeRemote={() => {
+            const eligible = documentMenu.ids.filter((id) => {
+              const item = documents.find((document) => document.id === id);
+              return (
+                item?.source.split(":", 1)[0] === "zhihu" ||
+                /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(item?.url ?? "") ||
+                (reader?.id === id && reader.sourceMemberships.length > 0)
+              );
+            });
+            void removeRemoteMemberships(eligible);
+          }}
+          moveToTrash={() => void trashDocuments(documentMenu.ids)}
+          restore={() => void restoreDocuments(documentMenu.ids)}
+          permanentlyDelete={(forceLocal) =>
+            void deleteDocumentsPermanently(documentMenu.ids, { forceLocal })
+          }
+          openOriginal={(url) => void window.desktop.openZhihuUrl(url)}
         />
       )}
       {selection && (
@@ -2408,13 +2576,14 @@ function SettingsNavigation({
   select,
   locale,
 }: {
-  selected: "general" | "data" | "about";
-  select(value: "general" | "data" | "about"): void;
+  selected: SettingsSection;
+  select(value: SettingsSection): void;
   locale: ReaderPreferences["locale"];
 }) {
   const english = locale === "en-US";
   const items = [
     ["general", english ? "General" : "通用", Settings],
+    ["shortcuts", english ? "Shortcuts" : "快捷键", Keyboard],
     ["data", english ? "Data & backup" : "数据与备份", Archive],
     ["about", english ? "About & updates" : "关于与更新", Info],
   ] as const;
@@ -2436,6 +2605,8 @@ function SettingsPage({
   section,
   preferences,
   savePreferences,
+  commands,
+  tags,
   appInfo,
   updateStatus,
   backupStatus,
@@ -2443,9 +2614,11 @@ function SettingsPage({
   createBackup,
   restoreBackup,
 }: {
-  section: "general" | "data" | "about";
+  section: SettingsSection;
   preferences: ReaderPreferences;
   savePreferences(patch: Partial<ReaderPreferences>): void;
+  commands: AppCommand[];
+  tags: ReaderTag[];
   appInfo: { version: string; packaged: boolean; updateConfigured: boolean } | null;
   updateStatus: string;
   backupStatus: string;
@@ -2492,8 +2665,29 @@ function SettingsPage({
             <div><b>{copy("创建完整备份", "Create a complete backup")}</b><p>{copy("保存正文、层级、标签、标注、批注、阅读位置、设置和本地图片。", "Save documents, tiers, tags, annotations, reading positions, preferences, and local images.")}</p><button onClick={createBackup}>{copy("创建备份", "Create backup")}</button></div>
             <div><b>{copy("从备份恢复", "Restore from backup")}</b><p>{copy("恢复前自动保存当前数据库安全副本。现有数据库会被所选备份替换。", "A safety copy is made before the selected backup replaces the current database.")}</p><button onClick={restoreBackup}>{copy("选择备份并恢复", "Choose backup and restore")}</button></div>
           </section>
+          <section className="settings-card">
+            <label>
+              <span>
+                <b>{copy("永久删除时取消远程收藏", "Remove remote favorite on permanent delete")}</b>
+                <small>{copy("从废纸篓永久删除前，先取消所属的可写知乎收藏；失败的条目会保留在废纸篓。", "Before permanent deletion, remove writable Zhihu memberships. Items with remote failures stay in Trash.")}</small>
+              </span>
+              <input
+                type="checkbox"
+                checked={preferences.remoteCleanupOnDelete === true}
+                onChange={(event) => savePreferences({ remoteCleanupOnDelete: event.target.checked })}
+              />
+            </label>
+          </section>
           {backupStatus && <p className="settings-result">{backupStatus}</p>}
         </>
+      )}
+      {section === "shortcuts" && (
+        <ShortcutSettings
+          preferences={preferences}
+          commands={commands}
+          tags={tags}
+          savePreferences={savePreferences}
+        />
       )}
       {section === "about" && (
         <>
@@ -2508,6 +2702,383 @@ function SettingsPage({
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+function ShortcutSettings({
+  preferences,
+  commands,
+  tags,
+  savePreferences,
+}: {
+  preferences: ReaderPreferences;
+  commands: AppCommand[];
+  tags: ReaderTag[];
+  savePreferences(patch: Partial<ReaderPreferences>): void;
+}) {
+  const [query, setQuery] = useState("");
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const configurable = commands.filter(
+    (command): command is AppCommand & {
+      defaultBinding: string;
+      contexts: NonNullable<AppCommand["contexts"]>;
+    } => Boolean(command.defaultBinding && command.contexts),
+  );
+  const visible = configurable.filter((command) =>
+    `${command.title} ${command.category} ${command.shortcut ?? ""}`
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase()),
+  );
+  const recording = configurable.find((command) => command.id === recordingId);
+  const conflict = recording
+    ? shortcutConflict(
+        configurable,
+        preferences.shortcutBindings ?? {},
+        recording.id,
+        draft,
+      )
+    : null;
+
+  function updateBindings(commandId: string, binding?: string) {
+    const next = { ...(preferences.shortcutBindings ?? {}) };
+    if (binding === undefined) delete next[commandId];
+    else next[commandId] = binding;
+    savePreferences({ shortcutBindings: next });
+  }
+
+  function contextLabel(contexts: NonNullable<AppCommand["contexts"]>) {
+    return contexts
+      .map((context) =>
+        ({
+          global: "全局",
+          library: "列表",
+          reader: "阅读器",
+          settings: "设置",
+          annotations: "标注",
+        })[context],
+      )
+      .join(" / ");
+  }
+
+  return (
+    <>
+      <header>
+        <small>SHORTCUTS</small>
+        <h1>快捷键中心</h1>
+        <p>点击快捷键开始录制；最多支持两段按键序列。</p>
+      </header>
+      <section className="settings-card shortcut-options">
+        <label>
+          <span>
+            <b>启用单字符快捷键</b>
+            <small>关闭后，输入字母和数字不会触发命令；组合键和方向键仍可用。</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={preferences.characterShortcutsEnabled !== false}
+            onChange={(event) => savePreferences({ characterShortcutsEnabled: event.target.checked })}
+          />
+        </label>
+        <div className="quick-tag-slots">
+          <b>快捷标签 X 1–9</b>
+          <small>先按 X，再按数字，把当前或多选内容贴上指定标签。</small>
+          <div>
+            {Array.from({ length: 9 }, (_, index) => {
+              const slot = String(index + 1);
+              return (
+                <label key={slot}>
+                  <kbd>X {slot}</kbd>
+                  <select
+                    value={preferences.quickTagSlots?.[slot] ?? ""}
+                    onChange={(event) => savePreferences({
+                      quickTagSlots: {
+                        ...(preferences.quickTagSlots ?? {}),
+                        [slot]: event.target.value,
+                      },
+                    })}
+                  >
+                    <option value="">未绑定</option>
+                    {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                  </select>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+      <section className="settings-card shortcut-center">
+        <div className="shortcut-search">
+          <Search size={15} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索命令或快捷键"
+          />
+          <button onClick={() => savePreferences({ shortcutBindings: {} })}>全部恢复默认</button>
+        </div>
+        <div className="shortcut-list">
+          {visible.map((command) => {
+            const binding = commandBinding(command, preferences.shortcutBindings);
+            const overridden = Object.prototype.hasOwnProperty.call(
+              preferences.shortcutBindings ?? {},
+              command.id,
+            );
+            const isRecording = recordingId === command.id;
+            return (
+              <div key={command.id} className="shortcut-row">
+                <span>
+                  <b>{command.title}</b>
+                  <small>{command.category} · {contextLabel(command.contexts)}</small>
+                </span>
+                {isRecording ? (
+                  <div className="shortcut-recorder">
+                    <button
+                      autoFocus
+                      className="recording"
+                      onKeyDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (event.key === "Escape") {
+                          setRecordingId(null);
+                          return;
+                        }
+                        if (event.key === "Backspace" || event.key === "Delete") {
+                          setDraft("");
+                          return;
+                        }
+                        const stroke = shortcutStroke(event.nativeEvent);
+                        if (!stroke) return;
+                        setDraft((current) => current.split(" ").filter(Boolean).length >= 2
+                          ? stroke
+                          : [current, stroke].filter(Boolean).join(" "));
+                      }}
+                    >
+                      {draft ? formatShortcut(draft) : "请按快捷键"}
+                    </button>
+                    <button
+                      disabled={!draft || Boolean(conflict)}
+                      onClick={() => {
+                        updateBindings(command.id, draft);
+                        setRecordingId(null);
+                      }}
+                    >保存</button>
+                    <button onClick={() => setRecordingId(null)}>取消</button>
+                  </div>
+                ) : (
+                  <div className="shortcut-binding">
+                    <button onClick={() => {
+                      setRecordingId(command.id);
+                      setDraft("");
+                    }}>
+                      {binding ? formatShortcut(binding) : "未绑定"}
+                    </button>
+                    <button title="禁用" onClick={() => updateBindings(command.id, "")}>×</button>
+                    {overridden && (
+                      <button title="恢复默认" onClick={() => updateBindings(command.id)}>↺</button>
+                    )}
+                  </div>
+                )}
+                {isRecording && conflict && (
+                  <small className="shortcut-conflict">与“{conflict.title}”冲突</small>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function DocumentActionsMenu({
+  menu,
+  items,
+  reader,
+  tags,
+  trash,
+  remoteCleanupOnDelete,
+  close,
+  setMode,
+  setTier,
+  addTag,
+  removeRemote,
+  moveToTrash,
+  restore,
+  permanentlyDelete,
+  openOriginal,
+}: {
+  menu: DocumentMenuState;
+  items: ReaderListItem[];
+  reader: ReaderDocument | null;
+  tags: ReaderTag[];
+  trash: boolean;
+  remoteCleanupOnDelete: boolean;
+  close(): void;
+  setMode(mode: DocumentMenuState["mode"]): void;
+  setTier(tier: ReaderListItem["tier"]): void;
+  addTag(name: string): void;
+  removeRemote(): void;
+  moveToTrash(): void;
+  restore(): void;
+  permanentlyDelete(forceLocal: boolean): void;
+  openOriginal(url: string): void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const primary = items[0] ?? reader;
+  const url = menu.ids.length === 1 ? primary?.url : null;
+  const remoteEligible = items.some(
+    (item) =>
+      item.source.split(":", 1)[0] === "zhihu" ||
+      /^https:\/\/(?:www|zhuanlan)\.zhihu\.com\//.test(item.url ?? ""),
+  ) || reader?.sourceMemberships.some(
+    (membership) => membership.source.split(":", 1)[0] === "zhihu",
+  ) === true;
+  const currentTier = items.every((item) => item.tier === primary?.tier)
+    ? primary?.tier
+    : null;
+  const left = Math.max(8, Math.min(menu.x, window.innerWidth - 248));
+  const top = Math.max(8, Math.min(menu.y, window.innerHeight - 380));
+
+  useEffect(() => {
+    requestAnimationFrame(() =>
+      menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(),
+    );
+  }, [menu.mode]);
+
+  function run(action: () => void) {
+    close();
+    action();
+  }
+
+  function navigate(event: React.KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const buttons = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+    );
+    if (!buttons.length) return;
+    event.preventDefault();
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const index = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? buttons.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[index]?.focus();
+  }
+
+  return (
+    <div className="document-menu-layer" onPointerDown={close}>
+      <div
+        className="document-actions-menu"
+        role="menu"
+        aria-label="文档操作"
+        ref={menuRef}
+        style={{ left, top }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onKeyDown={navigate}
+      >
+        <header>
+          {menu.mode !== "main" && (
+            <button onClick={() => setMode("main")} aria-label="返回">
+              <ArrowLeft size={15} />
+            </button>
+          )}
+          <b>
+            {menu.mode === "tier"
+              ? "选择层级"
+              : menu.mode === "tags"
+                ? "添加标签"
+                : menu.ids.length > 1
+                  ? `${menu.ids.length} 篇内容`
+                  : "更多操作"}
+          </b>
+        </header>
+        {menu.mode === "tier" ? (
+          TIERS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              role="menuitem"
+              className={currentTier === key ? "active" : ""}
+              onClick={() => run(() => setTier(key))}
+            >
+              <Icon size={16} /><span>{label}</span>
+              {currentTier === key && <Check size={15} />}
+            </button>
+          ))
+        ) : menu.mode === "tags" ? (
+          <>
+            {tags.slice(0, 12).map((tag) => (
+              <button
+                key={tag.id}
+                role="menuitem"
+                onClick={() => run(() => addTag(tag.name))}
+              >
+                <Tags size={15} /><span>#{tag.name}</span>
+              </button>
+            ))}
+            <button
+              role="menuitem"
+              onClick={() => {
+                const name = window.prompt("输入新标签")?.trim();
+                if (name) run(() => addTag(name));
+              }}
+            >
+              <Plus size={15} /><span>新建标签…</span>
+            </button>
+          </>
+        ) : (
+          <>
+            {!trash && (
+              <>
+                <button role="menuitem" onClick={() => setMode("tier")}>
+                  <Columns3 size={16} /><span>移动到层级</span><ChevronDown size={14} />
+                </button>
+                <button role="menuitem" onClick={() => setMode("tags")}>
+                  <Tags size={16} /><span>添加标签</span><ChevronDown size={14} />
+                </button>
+              </>
+            )}
+            {url && (
+              <button role="menuitem" onClick={() => run(() => openOriginal(url))}>
+                <FileText size={16} /><span>打开原文</span>
+              </button>
+            )}
+            {remoteEligible && !trash && (
+              <button role="menuitem" onClick={() => run(removeRemote)}>
+                <Star size={16} /><span>取消知乎收藏</span>
+              </button>
+            )}
+            <span className="document-menu-separator" />
+            {trash ? (
+              <>
+                <button role="menuitem" onClick={() => run(restore)}>
+                  <RotateCcw size={16} /><span>恢复</span>
+                </button>
+                <button className="danger" role="menuitem" onClick={() => run(() => permanentlyDelete(false))}>
+                  <Trash2 size={16} />
+                  <span>{remoteCleanupOnDelete ? "取消收藏并永久删除" : "永久删除"}</span>
+                </button>
+                {remoteCleanupOnDelete && (
+                  <button role="menuitem" onClick={() => run(() => permanentlyDelete(true))}>
+                    <Trash2 size={16} /><span>仅永久删除本地内容</span>
+                  </button>
+                )}
+              </>
+            ) : (
+              <button className="danger" role="menuitem" onClick={() => run(moveToTrash)}>
+                <Trash2 size={16} /><span>移到废纸篓</span>
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -2600,6 +3171,7 @@ function DocumentCard({
   selected,
   multiSelected,
   onClick,
+  openMenu,
   trash = false,
   restore,
   remove,
@@ -2608,6 +3180,10 @@ function DocumentCard({
   selected: boolean;
   multiSelected: boolean;
   onClick(event: React.MouseEvent): void;
+  openMenu(
+    event: React.MouseEvent | React.KeyboardEvent,
+    mode?: DocumentMenuState["mode"],
+  ): void;
   trash?: boolean;
   restore?(): void;
   remove?(): void;
@@ -2615,6 +3191,7 @@ function DocumentCard({
   return (
     <div
       className={`document-card ${selected ? "selected" : ""} ${multiSelected ? "multi-selected" : ""}`}
+      onContextMenu={(event) => openMenu(event)}
     >
       <button className="document-main" onClick={onClick}>
         {multiSelected && <span className="multi-check">✓</span>}
@@ -2638,6 +3215,38 @@ function DocumentCard({
           </small>
         </span>
       </button>
+      {!trash && (
+        <span className="document-card-actions">
+          <button
+            onClick={(event) => openMenu(event, "tier")}
+            title="快速分类"
+            aria-label="快速分类"
+          >
+            {(() => {
+              const Icon = TIERS.find((tier) => tier.key === item.tier)?.icon ?? Inbox;
+              return <Icon size={15} />;
+            })()}
+          </button>
+          <button
+            onClick={(event) => openMenu(event, "tags")}
+            title="添加标签"
+            aria-label="添加标签"
+          >
+            <Tags size={15} />
+          </button>
+          <button
+            onClick={(event) => openMenu(event)}
+            onKeyDown={(event) => {
+              if (event.shiftKey && event.key === "F10")
+                openMenu(event);
+            }}
+            title="更多操作"
+            aria-label="更多操作"
+          >
+            <MoreHorizontal size={16} />
+          </button>
+        </span>
+      )}
       {trash && (
         <span className="trash-actions">
           <button onClick={restore} title="恢复">
@@ -2657,6 +3266,7 @@ function DocumentTable({
   selectedId,
   selectedIds,
   select,
+  openMenu,
   editTags,
   save,
 }: {
@@ -2664,6 +3274,10 @@ function DocumentTable({
   selectedId: string | null;
   selectedIds: Set<string>;
   select(item: ReaderListItem, event: React.MouseEvent): void;
+  openMenu(
+    item: ReaderListItem,
+    event: React.MouseEvent | React.KeyboardEvent,
+  ): void;
   editTags(item: ReaderListItem, tags: string[]): Promise<boolean>;
   save(
     item: ReaderListItem,
@@ -2701,6 +3315,7 @@ function DocumentTable({
             role="row"
             className={`${selectedId === item.id ? "selected" : ""} ${selectedIds.has(item.id) ? "multi-selected" : ""}`}
             onClick={(event) => select(item, event)}
+            onContextMenu={(event) => openMenu(item, event)}
           >
             <div role="cell">{item.title}</div>
             <div role="cell">
@@ -2805,6 +3420,7 @@ function ReaderPane({
   removeTag,
   toolbarOpen,
   setToolbarOpen,
+  openActions,
 }: {
   reader: ReaderDocument | null;
   expanded?: boolean;
@@ -2825,6 +3441,7 @@ function ReaderPane({
   removeTag(tagId: string): void;
   toolbarOpen: "type" | "tier" | "tags" | null;
   setToolbarOpen(open: "type" | "tier" | "tags" | null): void;
+  openActions(event: React.MouseEvent): void;
 }) {
   const [toolbarHidden, setToolbarHidden] = useState(false);
   const [toolbarLocked, setToolbarLocked] = useState(false);
@@ -2853,6 +3470,7 @@ function ReaderPane({
       className={`reader-pane ${expanded ? "expanded-reader" : ""}`}
       ref={paneRef}
       onScroll={handleScroll}
+      onContextMenu={openActions}
       tabIndex={0}
       aria-label="正文阅读区"
     >
@@ -2872,6 +3490,7 @@ function ReaderPane({
           onOpenChange={setToolbarLocked}
           open={toolbarOpen}
           setOpen={setToolbarOpen}
+          openActions={openActions}
         />
       )}
       <div className="reader-content">
@@ -2912,6 +3531,7 @@ function ReaderToolbar({
   onOpenChange,
   open,
   setOpen,
+  openActions,
 }: {
   reader: ReaderDocument;
   hidden: boolean;
@@ -2927,6 +3547,7 @@ function ReaderToolbar({
   onOpenChange(open: boolean): void;
   open: "type" | "tier" | "tags" | null;
   setOpen(open: "type" | "tier" | "tags" | null): void;
+  openActions(event: React.MouseEvent): void;
 }) {
   const [tagName, setTagName] = useState("");
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -3000,6 +3621,13 @@ function ReaderToolbar({
           >
             <Tags size={16} />
             {reader.tags.length > 0 && <i>{reader.tags.length}</i>}
+          </button>
+          <button
+            data-tooltip="更多操作"
+            aria-label="更多操作"
+            onClick={openActions}
+          >
+            <MoreHorizontal size={17} />
           </button>
         </div>
         {open && (
