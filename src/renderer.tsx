@@ -73,6 +73,7 @@ import {
   resolveShortcut,
   shortcutConflict,
   shortcutStroke,
+  tagTogglePlan,
 } from "./renderer/keyboard-shortcuts.mjs";
 import "lxgw-wenkai-webfont/style.css";
 import "./renderer.css";
@@ -906,6 +907,45 @@ function App() {
     return true;
   }
 
+  async function toggleTagOnDocuments(ids: string[], tag: ReaderTag) {
+    const hasTag = (id: string) => {
+      const item = documents.find((document) => document.id === id);
+      return item?.tagNames.includes(tag.name) ||
+        (reader?.id === id && reader.tags.some((current) => current.id === tag.id));
+    };
+    const { remove, targets } = tagTogglePlan(ids, ids.filter(hasTag));
+    const results = await Promise.all(
+      targets.map((id) =>
+        remove
+          ? readerClient.removeDocumentTag(id, tag.id)
+          : readerClient.addDocumentTag(id, tag.name),
+      ),
+    );
+    const changed = targets.filter((_, index) => results[index].ok);
+    setDocuments((current) =>
+      current.map((item) =>
+        changed.includes(item.id)
+          ? {
+              ...item,
+              tagNames: remove
+                ? item.tagNames.filter((name) => name !== tag.name)
+                : [...new Set([...item.tagNames, tag.name])],
+            }
+          : item,
+      ),
+    );
+    if (reader && changed.includes(reader.id))
+      setReader({
+        ...reader,
+        tags: remove
+          ? reader.tags.filter((current) => current.id !== tag.id)
+          : [...reader.tags, tag],
+      });
+    void loadList(reader?.id, true);
+    if (changed.length !== targets.length)
+      setStatus(`部分文档${remove ? "移除" : "添加"}标签失败`);
+  }
+
   async function batchAddTag() {
     const name = window.prompt("为选中文档添加标签")?.trim();
     if (!name) return;
@@ -1465,14 +1505,14 @@ function App() {
       const tag = allTags.find((candidate) => candidate.id === tagId);
       return {
         id: `quick-tag-${slot}`,
-        title: tag ? `添加标签 #${tag.name}` : `设置快捷标签 ${slot}`,
+        title: tag ? `切换标签 #${tag.name}` : `设置快捷标签 ${slot}`,
         category: "文档",
         defaultBinding: `x ${slot}`,
         contexts: ["library", "reader"] as Array<"library" | "reader">,
         keywords: ["标签", "快捷标签"],
         disabledReason: reader || selectedIds.size ? undefined : "请先选择文档",
         run: () => {
-          if (tag) void addTagToDocuments(activeDocumentIds(), tag.name);
+          if (tag) void toggleTagOnDocuments(activeDocumentIds(), tag);
           else {
             setWorkspace("settings");
             setSettingsSection("shortcuts");
@@ -2655,17 +2695,6 @@ function SettingsPage({
                 <option value="dark">{copy("深色", "Dark")}</option>
               </select>
             </label>
-          </section>
-        </>
-      )}
-      {section === "data" && (
-        <>
-          <header><small>{copy("数据", "Data")}</small><h1>{copy("备份与恢复", "Backup & restore")}</h1><p>{copy("数据库和内容寻址媒体会一起保存；登录 Cookie 和缓存不会进入备份。", "The database and content-addressed media are saved together. Login cookies and caches are excluded.")}</p></header>
-          <section className="settings-card backup-card">
-            <div><b>{copy("创建完整备份", "Create a complete backup")}</b><p>{copy("保存正文、层级、标签、标注、批注、阅读位置、设置和本地图片。", "Save documents, tiers, tags, annotations, reading positions, preferences, and local images.")}</p><button onClick={createBackup}>{copy("创建备份", "Create backup")}</button></div>
-            <div><b>{copy("从备份恢复", "Restore from backup")}</b><p>{copy("恢复前自动保存当前数据库安全副本。现有数据库会被所选备份替换。", "A safety copy is made before the selected backup replaces the current database.")}</p><button onClick={restoreBackup}>{copy("选择备份并恢复", "Choose backup and restore")}</button></div>
-          </section>
-          <section className="settings-card">
             <label>
               <span>
                 <b>{copy("永久删除时取消远程收藏", "Remove remote favorite on permanent delete")}</b>
@@ -2677,6 +2706,15 @@ function SettingsPage({
                 onChange={(event) => savePreferences({ remoteCleanupOnDelete: event.target.checked })}
               />
             </label>
+          </section>
+        </>
+      )}
+      {section === "data" && (
+        <>
+          <header><small>{copy("数据", "Data")}</small><h1>{copy("备份与恢复", "Backup & restore")}</h1><p>{copy("数据库和内容寻址媒体会一起保存；登录 Cookie 和缓存不会进入备份。", "The database and content-addressed media are saved together. Login cookies and caches are excluded.")}</p></header>
+          <section className="settings-card backup-card">
+            <div><b>{copy("创建完整备份", "Create a complete backup")}</b><p>{copy("保存正文、层级、标签、标注、批注、阅读位置、设置和本地图片。", "Save documents, tiers, tags, annotations, reading positions, preferences, and local images.")}</p><button onClick={createBackup}>{copy("创建备份", "Create backup")}</button></div>
+            <div><b>{copy("从备份恢复", "Restore from backup")}</b><p>{copy("恢复前自动保存当前数据库安全副本。现有数据库会被所选备份替换。", "A safety copy is made before the selected backup replaces the current database.")}</p><button onClick={restoreBackup}>{copy("选择备份并恢复", "Choose backup and restore")}</button></div>
           </section>
           {backupStatus && <p className="settings-result">{backupStatus}</p>}
         </>

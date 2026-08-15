@@ -18,4 +18,4 @@ export function resolveShortcut(input: {
   characterShortcuts?: boolean;
 }): { commandId: string | null; pending: string; options: Array<{ id: string; title: string; binding: string }> };
 export function shortcutConflict(commands: ShortcutCommand[], overrides: Record<string, string>, commandId: string, binding: string): ShortcutCommand | null;
-
+export function tagTogglePlan(ids: string[], taggedIds: string[]): { remove: boolean; targets: string[] };

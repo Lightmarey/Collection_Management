@@ -85,3 +85,9 @@ export function shortcutConflict(commands, overrides, commandId, binding) {
       (other === binding || other.startsWith(`${binding} `) || binding.startsWith(`${other} `));
   }) ?? null;
 }
+
+export function tagTogglePlan(ids, taggedIds) {
+  const tagged = new Set(taggedIds);
+  const remove = ids.every((id) => tagged.has(id));
+  return { remove, targets: remove ? ids : ids.filter((id) => !tagged.has(id)) };
+}

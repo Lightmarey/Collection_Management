@@ -5,6 +5,7 @@ import {
   resolveShortcut,
   shortcutConflict,
   shortcutStroke,
+  tagTogglePlan,
 } from "../src/renderer/keyboard-shortcuts.mjs";
 
 const commands = [
@@ -34,4 +35,15 @@ test("can disable character-only shortcuts and detects overlapping conflicts", (
   assert.equal(shortcutConflict(commands, {}, "list-next", "Down"), null);
   assert.equal(shortcutConflict(commands, {}, "short", "Mod+k")?.id, "palette");
   assert.equal(shortcutConflict(commands, {}, "short", "c")?.id, "archive");
+});
+
+test("quick tags add missing tags and remove them when every target has one", () => {
+  assert.deepEqual(tagTogglePlan(["a", "b"], ["a"]), {
+    remove: false,
+    targets: ["b"],
+  });
+  assert.deepEqual(tagTogglePlan(["a", "b"], ["a", "b"]), {
+    remove: true,
+    targets: ["a", "b"],
+  });
 });
