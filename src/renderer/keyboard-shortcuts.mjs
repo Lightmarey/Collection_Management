@@ -14,7 +14,7 @@ export function shortcutStroke(event) {
   const modifiers = [];
   if (event.ctrlKey || event.metaKey) modifiers.push("Mod");
   if (event.altKey) modifiers.push("Alt");
-  if (event.shiftKey && event.key.length > 1) modifiers.push("Shift");
+  if (event.shiftKey && (event.key.length > 1 || /^[a-z]$/i.test(event.key))) modifiers.push("Shift");
   return [...modifiers, key].join("+");
 }
 

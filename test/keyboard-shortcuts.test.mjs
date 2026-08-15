@@ -18,6 +18,8 @@ const commands = [
 
 test("normalizes platform modifiers and readable shortcut labels", () => {
   assert.equal(shortcutStroke({ key: "K", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), "Mod+k");
+  assert.equal(shortcutStroke({ key: "K", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }), "Mod+Shift+k");
+  assert.equal(shortcutStroke({ key: "?", ctrlKey: false, metaKey: false, altKey: false, shiftKey: true }), "?");
   assert.equal(shortcutStroke({ key: "ArrowDown", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }), "Down");
   assert.equal(formatShortcut("c 1"), "C  1");
 });
