@@ -10,7 +10,6 @@ import { createRoot } from "react-dom/client";
 import {
   Archive,
   ArrowLeft,
-  ArrowUpDown,
   Bookmark,
   Check,
   ChevronDown,
@@ -102,12 +101,6 @@ const EN_TIER_LABEL: Record<string, string> = {
 };
 type ListSort = NonNullable<ReaderListOptions["sort"]>;
 type SortDirection = NonNullable<ReaderListOptions["sortDirection"]>;
-const SORT_OPTIONS: Array<{ key: ListSort; label: string }> = [
-  { key: "updated", label: "更新时间" },
-  { key: "title", label: "标题" },
-  { key: "status", label: "层级" },
-  { key: "duration", label: "阅读时长" },
-];
 const DEFAULT_PREFS: ReaderPreferences = {
   locale: "zh-CN",
   theme: "system",
@@ -2074,24 +2067,6 @@ function App() {
                         ))}
                       </select>
                     )}
-                    <select
-                      aria-label="列表排序"
-                      value={preferences.listSort ?? "updated"}
-                      onChange={(event) => changeListSort(event.target.value as ListSort)}
-                    >
-                      {SORT_OPTIONS.map((option) => (
-                        <option key={option.key} value={option.key}>{option.label}</option>
-                      ))}
-                    </select>
-                    <button
-                      className="sort-direction"
-                      aria-label={(preferences.listSortDirection ?? "desc") === "asc" ? "切换为降序" : "切换为升序"}
-                      title={(preferences.listSortDirection ?? "desc") === "asc" ? "升序" : "降序"}
-                      onClick={() => changeListSort(preferences.listSort ?? "updated", true)}
-                    >
-                      <ArrowUpDown size={15} />
-                      <span>{(preferences.listSortDirection ?? "desc") === "asc" ? "升" : "降"}</span>
-                    </button>
                     <div className="view-toggle">
                       <button
                         className={

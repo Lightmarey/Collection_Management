@@ -495,22 +495,13 @@ button {
   align-items: center;
   gap: 6px;
 }
-.list-controls > select,
-.list-controls > .sort-direction {
+.list-controls > select {
   height: 32px;
+  padding: 0 8px;
   border: 1px solid var(--border-color);
   border-radius: 7px;
   background: var(--surface-raised);
   color: var(--muted-color);
-}
-.list-controls > select {
-  padding: 0 8px;
-}
-.list-controls > .sort-direction {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
 }
 .document-card-actions {
   position: absolute;
